@@ -317,8 +317,10 @@ class DreamAttention(nn.Module):
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
         if attention_mask is not None:  # no matter the length, we just slice it
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-            attn_weights = attn_weights + causal_mask
+            if attention_mask.dtype == torch.bool:
+                attn_weights.masked_fill_(attention_mask.logical_not(), float("-inf"))
+            else: 
+                attn_weights = attn_weights + attention_mask[:, :, :, : key_states.shape[-2]]
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
