@@ -96,9 +96,12 @@ class ToyMMDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        # random text tokens (avoid special tokens crudely by sampling in [0, vocab_size))
-        vocab_size = len(self.tokenizer)
-        text = torch.randint(0, vocab_size, (self.text_len,), dtype=torch.long).tolist()
+        # random text tokens
+        # IMPORTANT: sample only from the *base* vocab to avoid accidentally sampling
+        # the added OneFlow special tokens (e.g., `<|oneflow_image|>`) which would
+        # break the alignment between image tokens and provided image latents.
+        base_vocab_size = int(getattr(self.tokenizer, "vocab_size", len(self.tokenizer)))
+        text = torch.randint(0, base_vocab_size, (self.text_len,), dtype=torch.long).tolist()
 
         input_ids = [self.bos] + text + [self.image_token] + [self.eos]
 
