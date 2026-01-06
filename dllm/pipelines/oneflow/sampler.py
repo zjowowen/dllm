@@ -18,6 +18,7 @@ class OneFlowSamplerConfig(SamplerConfig):
     temperature: float = 0.0
     use_pi_gate: bool = True
     image_num_tokens: int = 64  # fixed number of latent tokens per image (v1)
+    edit_prompt: bool = False  # if False, only allow insertions after the prompt
 
 
 @dataclass
@@ -56,6 +57,7 @@ class OneFlowSampler(BaseSampler):
         temperature = float(kwargs.get("temperature", config.temperature))
         use_pi_gate = bool(kwargs.get("use_pi_gate", config.use_pi_gate))
         image_num_tokens = int(kwargs.get("image_num_tokens", config.image_num_tokens))
+        edit_prompt = bool(kwargs.get("edit_prompt", config.edit_prompt))
         return_dict = bool(kwargs.get("return_dict", config.return_dict))
 
         if len(inputs) != 1:
@@ -79,6 +81,8 @@ class OneFlowSampler(BaseSampler):
             x_list = [int(bos)]
         elif x_list[0] != int(bos):
             x_list = [int(bos)] + x_list
+
+        prompt_len = len(x_list)
 
         image_token_id = int(self.tokenizer.convert_tokens_to_ids(ONEFLOW_IMAGE_TOKEN))
         if self.tokenizer.unk_token_id is not None and image_token_id == int(
@@ -224,6 +228,10 @@ class OneFlowSampler(BaseSampler):
 
                 insertions: list[tuple[int, int]] = []  # (slot_index_in_x, token_id)
                 for i, pos in enumerate(text_pos_total):
+                    # By default, do not edit the prompt: only allow insertions after the
+                    # last prompt token. This keeps prefix conditioning stable.
+                    if (not edit_prompt) and i < (prompt_len - 1):
+                        continue
                     p_lam = (dt_text * w * float(lam[pos].item()))
                     p_lam = max(0.0, min(1.0 - 1e-6, p_lam))
                     do_lam = bool(torch.bernoulli(torch.tensor(p_lam, device=device)).item())
