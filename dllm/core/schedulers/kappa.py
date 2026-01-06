@@ -70,6 +70,41 @@ class BaseKappaScheduler:
         # w(t) = κ'(t) / (1 - κ(t))
         return self.kappa_derivative(t) / (1 - self.kappa(t) + 1e-6)
 
+    def kappa_inverse(
+        self,
+        u: Number,
+        *,
+        tol: float = 1e-6,
+        max_iter: int = 64,
+    ) -> Number:
+        """
+        Numerically invert κ(t) on t∈[0,1] for u∈[0,1] using bisection.
+
+        Subclasses may override with closed-form inverses.
+        """
+        u_tensor = torch.as_tensor(
+            u,
+            dtype=torch.float32,
+            device=u.device if isinstance(u, torch.Tensor) else None,
+        )
+        if not torch.all((0.0 <= u_tensor) & (u_tensor <= 1.0)):
+            raise ValueError(f"u={u} not in [0,1]")
+
+        # Bisection on [0,1]
+        lo = torch.zeros_like(u_tensor)
+        hi = torch.ones_like(u_tensor)
+        for _ in range(int(max_iter)):
+            mid = (lo + hi) * 0.5
+            kmid = self._kappa(mid)
+            lo = torch.where(kmid < u_tensor, mid, lo)
+            hi = torch.where(kmid >= u_tensor, mid, hi)
+
+            if torch.max(hi - lo).item() <= float(tol):
+                break
+
+        out = (lo + hi) * 0.5
+        return out.item() if isinstance(u, float) else out
+
     # ---- hooks implemented by subclasses ----
     def _kappa(self, t: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
@@ -101,6 +136,16 @@ class LinearKappaScheduler(CubicKappaScheduler):
     a: float = -1.0
     b: float = 0.0
 
+    def kappa_inverse(
+        self,
+        u: Number,
+        *,
+        tol: float = 1e-6,
+        max_iter: int = 64,
+    ) -> Number:
+        # κ(t)=t
+        return u
+
 
 @dataclasses.dataclass
 class CosineKappaScheduler(BaseKappaScheduler):
@@ -111,6 +156,26 @@ class CosineKappaScheduler(BaseKappaScheduler):
     def _kappa_derivative(self, t: torch.Tensor) -> torch.Tensor:
         # κ'(t) = (π/2) * sin((π/2) * t)
         return 0.5 * math.pi * torch.sin(0.5 * math.pi * t)
+
+    def kappa_inverse(
+        self,
+        u: Number,
+        *,
+        tol: float = 1e-6,
+        max_iter: int = 64,
+    ) -> Number:
+        # κ(t) = 1 - cos((π/2) t)
+        # => cos((π/2) t) = 1 - u
+        # => t = (2/π) arccos(1-u)
+        u_tensor = torch.as_tensor(
+            u,
+            dtype=torch.float32,
+            device=u.device if isinstance(u, torch.Tensor) else None,
+        )
+        if not torch.all((0.0 <= u_tensor) & (u_tensor <= 1.0)):
+            raise ValueError(f"u={u} not in [0,1]")
+        t = (2.0 / math.pi) * torch.arccos((1.0 - u_tensor).clamp(-1.0, 1.0))
+        return t.item() if isinstance(u, float) else t
 
 
 # ---------------- Factory helpers ---------------- #
