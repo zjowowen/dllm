@@ -90,7 +90,7 @@ class OneFlowSampler(BaseSampler):
             )
 
         pad_id = int(self.tokenizer.pad_token_id or self.tokenizer.eos_token_id)
-        device = self.model.device
+        device = next(self.model.parameters()).device
 
         dim_latent = int(getattr(getattr(self.model, "config", None), "dim_latent", 4))
         zero_lat = torch.zeros((dim_latent,), device=device, dtype=torch.float32)
@@ -283,5 +283,14 @@ class OneFlowSampler(BaseSampler):
             images=[img["latent"] for img in images] if images else None,
             image_times=[float(img["t"]) for img in images] if images else None,
         )
+
+    @torch.no_grad()
+    def infill(
+        self,
+        inputs: List[torch.Tensor | list],
+        config: SamplerConfig | None = None,
+        **kwargs,
+    ) -> SamplerOutput:
+        raise NotImplementedError("OneFlowSampler.infill is not implemented in v1.")
 
 
