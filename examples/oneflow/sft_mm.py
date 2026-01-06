@@ -115,6 +115,10 @@ def train():
 
     cfg = OneFlowConfig(
         vocab_size=len(tokenizer),
+        bos_token_id=int(tokenizer.bos_token_id),
+        eos_token_id=int(tokenizer.eos_token_id),
+        pad_token_id=int(tokenizer.pad_token_id),
+        unk_token_id=int(tokenizer.unk_token_id) if tokenizer.unk_token_id is not None else None,
         dim=model_args.dim,
         depth=model_args.depth,
         dim_head=model_args.dim_head,

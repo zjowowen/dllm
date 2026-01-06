@@ -23,6 +23,12 @@ class OneFlowConfig:
     dim: int = 768
     vocab_size: int = 32000
 
+    # token ids (to satisfy HF Trainer utilities like _align_special_tokens)
+    bos_token_id: int | None = None
+    eos_token_id: int | None = None
+    pad_token_id: int | None = None
+    unk_token_id: int | None = None
+
     # multimodal (v1 supports a single modality type: image latents)
     dim_latent: int = 4  # image latent channel dim (e.g., SD VAE latents are 4)
 
@@ -35,6 +41,9 @@ class OneFlowConfig:
     use_flex_attn: bool = False
     num_residual_streams: int = 1
     num_residual_fracs: int = 4
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
 
 
 class OneFlowModel(nn.Module):
