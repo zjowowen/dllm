@@ -247,6 +247,35 @@ bag 的构造与论文一致（伪码）：
 - 训练脚本保持与 `examples/editflow/pt.py` / `sft.py` 相同结构：`HfArgumentParser` + `dllm.utils.initial_training_setup` + 自定义 trainer。
 - 推断脚本保持与 `examples/editflow/sample.py` / `chat.py` 相同结构：构建 sampler → `sample()` → 可视化/解码。
 
+### 与 editflow 的 utils 复用与共享模块
+
+为减少 `editflow` 与 `oneflow` 在 CTMC/采样工具函数上的重复实现，并避免 pipeline 间相互依赖造成的循环 import，本仓库把“通用 helper”抽到共享模块：
+
+- `dllm/pipelines/ctmc_utils.py`
+  - `pad_1d`: 训练侧把变长 token list pad 成 `[B,L]` 张量与 mask
+  - `sample_from_logits`: 从 logits 采样 token（支持 temperature）
+  - `bernoulli_from_rate`: 把 rate 与步长 τ 转为 Bernoulli 触发（带 clamp）
+  - `safe_log`: 数值稳定的 `log(x)`（带 clamp）
+
+迁移后的依赖关系：
+- `dllm/pipelines/editflow/{trainer.py,sampler.py}` 与 `dllm/pipelines/oneflow/{trainer.py,sampler.py}` 统一 import `ctmc_utils`。
+- 为保持兼容，`dllm/pipelines/editflow/utils.py` 继续对外暴露 `pad_1d`（通过 re-export），旧的 import 路径不会被破坏。
+
+### prompt_len 语义（SFT）
+
+当 batch 中提供 `prompt_len`（例如 SFT 场景 `prompt + response`）时，OneFlow v1 采用与 `EditFlow` 一致的语义：**prompt 前缀只作为条件输入，不在训练中被编辑**。
+
+- **训练（OneFlowTrainer）**：
+  - `prompt_len` 表示 `x1_ids` 的前缀长度（包含 BOS 时也应计入）。
+  - 在构造 `X_t` 时，trainer 会强制 keep `x1_ids[:prompt_len]`，从而避免 prompt 区域产生删除/插入事件。
+  - 约束：`0 < prompt_len <= len(x1_ids)`，否则报错。
+- **推断（OneFlowSampler）**：
+  - 默认 `edit_prompt=False`，只允许在 prompt 的最后一个 token 之后插入（保持前缀稳定）。
+- **多模态限制（v1）**：
+  - 若训练 batch 同时提供 `image_latents`，并且 `prompt_len` 覆盖了 `<|oneflow_image|>`，当前实现会显式报错。
+  - 原因：v1 尚未定义“prompt 内图像作为条件输入”的语义（避免把条件图像误当作待生成图像）。
+  - 后续若要支持条件图像，建议引入独立 token/字段区分「条件图像」与「待生成图像」。
+
 ---
 
 ## 8. 依赖与 License

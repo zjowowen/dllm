@@ -9,6 +9,7 @@ import torch
 import transformers
 
 from dllm.utils.utils import parse_spec
+from dllm.pipelines.ctmc_utils import pad_1d
 
 
 # ------------------------------- Collator (x0 source) --------------------------------
@@ -97,30 +98,6 @@ class EditFlowCollator:
 
         batch["return_loss"] = True
         return batch
-
-
-# ------------------------------- Trainer utils --------------------------------
-def pad_1d(
-    batch_lists: list[list[int]], pad_val: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Pads a list of variable-length integer lists into:
-      - out: tensor of shape [B, Lmax] with padding value `pad_val`
-      - mask: tensor of shape [B, Lmax] with 1 for real tokens and 0 for padding (int mask)
-    """
-    B = len(batch_lists)
-    Lmax = max((len(x) for x in batch_lists), default=0)
-    out = torch.full((B, Lmax), pad_val, dtype=torch.long)
-    mask = torch.zeros((B, Lmax), dtype=torch.long)  # 0/1 mask (int)
-
-    for b, x in enumerate(batch_lists):
-        if not x:
-            continue
-        L = len(x)
-        out[b, :L] = torch.tensor(x, dtype=torch.long)
-        mask[b, :L] = 1  # mark valid positions with 1
-
-    return out, mask
 
 
 def init_editflow_from_src(

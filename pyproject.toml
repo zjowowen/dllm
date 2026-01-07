@@ -49,6 +49,8 @@ oneflow = [
     # Optional but commonly used for image-latent VAE encode/decode in examples
     "diffusers",
     "torchvision",
+    # Streaming datasets from tar shards (recommended for offline multimodal training)
+    "webdataset",
 ]
 rl = [
     "trl==0.26.0",

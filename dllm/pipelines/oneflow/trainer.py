@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import transformers
 
 from dllm.core.schedulers import BaseKappaScheduler, CubicKappaScheduler
-from dllm.pipelines.editflow.utils import pad_1d
+from dllm.pipelines.ctmc_utils import pad_1d
 from dllm.pipelines.oneflow.utils import ONEFLOW_IMAGE_TOKEN
 from dllm.utils.configs import TrainingArguments
 
@@ -59,6 +59,21 @@ class OneFlowTrainer(transformers.Trainer):
         x1_ids: list[list[int]] = inputs["x1_ids"]
         B = len(x1_ids)
 
+        prompt_len_raw = inputs.get("prompt_len", None)
+        prompt_len_list: list[int] | None = None
+        if prompt_len_raw is not None:
+            if isinstance(prompt_len_raw, torch.Tensor):
+                pl = prompt_len_raw.detach().to("cpu")
+                if pl.ndim == 2 and pl.shape[1] == 1:
+                    pl = pl.squeeze(1)
+                prompt_len_list = [int(x) for x in pl.tolist()]
+            else:
+                prompt_len_list = [int(x) for x in prompt_len_raw]
+            if len(prompt_len_list) != B:
+                raise ValueError(
+                    f"prompt_len batch size mismatch: got {len(prompt_len_list)} values, expected {B}."
+                )
+
         device = next(model.parameters()).device
 
         # ---- sample tau_text ~ Unif[0,2], set t_text=min(1,tau_text) ---------------
@@ -100,12 +115,35 @@ class OneFlowTrainer(transformers.Trainer):
         kept_timg_list: list[list[float]] = []
 
         for x1, kb in zip(x1_ids, k.squeeze(1).tolist()):
+            b_idx = len(xt_list)
             if not x1:
                 raise ValueError("Empty x1_ids is not supported for OneFlow training.")
+
+            # If prompt_len is provided (SFT), do not edit the prompt prefix:
+            # force-keep all prompt tokens so no deletions/insertions occur inside.
+            pl: int | None = None
+            if prompt_len_list is not None:
+                pl = int(prompt_len_list[b_idx])
+                if pl <= 0 or pl > len(x1):
+                    raise ValueError(
+                        f"Invalid prompt_len={pl} for sample {b_idx}: x1 length={len(x1)}"
+                    )
+                # v1 limitation: do not support conditioning on images inside the prompt.
+                if image_token_id is not None and any(
+                    int(t) == int(image_token_id) for t in x1[:pl]
+                ):
+                    raise ValueError(
+                        f"prompt_len spans over {ONEFLOW_IMAGE_TOKEN} for sample {b_idx}. "
+                        "OneFlow v1 does not support conditioning on prompt images. "
+                        "Please place image tokens after the prompt, or omit prompt_len."
+                    )
 
             # per-token keep with prob kappa(t); BOS must be kept
             keep = (torch.rand(len(x1), device=device) < float(kb)).tolist()
             keep[0] = True
+            if pl is not None:
+                for i in range(pl):
+                    keep[i] = True
             # If training with images, force-keep the image placeholder tokens so that
             # image insertion/deletion is governed by the interleaved τ_img schedule.
             if image_token_id is not None:
@@ -133,7 +171,6 @@ class OneFlowTrainer(transformers.Trainer):
                 continue
 
             # Standardize images for this sample
-            b_idx = len(xt_list)
             raw = image_latents_raw[b_idx]
             if raw is None:
                 images = []

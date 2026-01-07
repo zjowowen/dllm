@@ -5,21 +5,7 @@ import torch
 
 from dllm.core.samplers.base import BaseSampler, SamplerConfig, SamplerOutput
 from dllm.core.schedulers import BaseKappaScheduler, LinearKappaScheduler
-
-
-def bernoulli_from_rate(rate: torch.Tensor, tau: float) -> torch.Tensor:
-    p = (rate.float() * float(tau)).clamp_(0.0, 1.0 - 1e-6)
-    return torch.bernoulli(p)
-
-
-def sample_from_logits(logits_row: torch.Tensor, temperature: float) -> int:
-    if temperature <= 0.0:
-        return int(torch.argmax(logits_row).item())
-    return int(
-        torch.distributions.Categorical(logits=(logits_row / temperature))
-        .sample()
-        .item()
-    )
+from dllm.pipelines.ctmc_utils import bernoulli_from_rate, sample_from_logits
 
 
 @torch.no_grad()

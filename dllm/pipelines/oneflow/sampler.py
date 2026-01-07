@@ -7,6 +7,7 @@ import torch
 
 from dllm.core.samplers.base import BaseSampler, SamplerConfig, SamplerOutput
 from dllm.core.schedulers import BaseKappaScheduler, LinearKappaScheduler
+from dllm.pipelines.ctmc_utils import sample_from_logits
 from dllm.pipelines.oneflow.utils import ONEFLOW_IMAGE_TOKEN
 
 
@@ -118,15 +119,6 @@ class OneFlowSampler(BaseSampler):
                 )
 
         ensure_images_for_prompt()
-
-        def sample_from_logits(logits_row: torch.Tensor) -> int:
-            if temperature <= 0.0:
-                return int(torch.argmax(logits_row).item())
-            return int(
-                torch.distributions.Categorical(logits=(logits_row / temperature))
-                .sample()
-                .item()
-            )
 
         # histories (text-only for v1)
         histories = [] if return_dict else None
@@ -245,7 +237,7 @@ class OneFlowSampler(BaseSampler):
                         if not do_pi:
                             continue
 
-                    a = sample_from_logits(q_logits[pos])
+                    a = sample_from_logits(q_logits[pos], temperature=float(temperature))
                     insertions.append((i, a))
 
                 # apply from right to left so indices stay valid
