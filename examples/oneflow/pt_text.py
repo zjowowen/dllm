@@ -38,6 +38,10 @@ class DataArguments(dllm.utils.DataArguments):
     text_field: str = "Text"
     max_length: int = 256
     streaming: bool = False
+    # If True, treat `dataset_args` as a local path produced by 🤗 datasets `save_to_disk`,
+    # and assume it is ALREADY preprocessed into PT format (contains `input_ids`).
+    # This is useful for offline clusters to avoid downloading + tokenization on cluster.
+    load_preprocessed_data: bool = False
     drop_tail: bool = True
     insert_eos: bool = field(default=True)
 
@@ -101,25 +105,33 @@ def train():
         dataset = dllm.data.load_pt_dataset(
             data_args.dataset_args,
             streaming=data_args.streaming,
+            load_preprocessed_data=data_args.load_preprocessed_data,
         )
 
-        map_fn = functools.partial(
-            dllm.utils.tokenize_and_group,
-            tokenizer=tokenizer,
-            text_field=data_args.text_field,
-            seq_length=data_args.max_length,
-            insert_eos=data_args.insert_eos,
-            drop_tail=data_args.drop_tail,
-            add_special_tokens=False,
-        )
+        if not data_args.load_preprocessed_data:
+            map_fn = functools.partial(
+                dllm.utils.tokenize_and_group,
+                tokenizer=tokenizer,
+                text_field=data_args.text_field,
+                seq_length=data_args.max_length,
+                insert_eos=data_args.insert_eos,
+                drop_tail=data_args.drop_tail,
+                add_special_tokens=False,
+            )
 
-        dataset = dataset.map(
-            map_fn,
-            batched=True,
-            remove_columns=dataset["train"].column_names,
-            **({} if data_args.streaming else {"num_proc": data_args.num_proc}),
-            **({} if data_args.streaming else {"desc": "Mapping dataset to PT format"}),
-        )
+            dataset = dataset.map(
+                map_fn,
+                batched=True,
+                remove_columns=dataset["train"].column_names,
+                **({} if data_args.streaming else {"num_proc": data_args.num_proc}),
+                **({} if data_args.streaming else {"desc": "Mapping dataset to PT format"}),
+            )
+        else:
+            # Offline/preprocessed path: dataset should already contain `input_ids`.
+            if "input_ids" not in dataset["train"].column_names:
+                raise ValueError(
+                    "load_preprocessed_data=True but dataset does not contain `input_ids`."
+                )
 
         # Ensure each sample starts with BOS (required for insertion slot semantics)
         bos_id = int(tokenizer.bos_token_id)
