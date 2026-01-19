@@ -4,6 +4,10 @@ source /usr/local/Ascend/nnal/atb/set_env.sh
 export HCCL_NPU_SOCKET_PORT_RANGE=auto 
 export LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:$LD_LIBRARY_PATH
 
+# Keep Ascend's PYTHONPATH (tbe/te/etc). Append repo root for `import dllm`.
+_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="${_ROOT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+
 # NOTE:
 # - Do NOT commit proxy credentials into git.
 # - If you need a proxy for downloading (HF / pip / etc), export it in your shell before running:

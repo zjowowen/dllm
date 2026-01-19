@@ -37,7 +37,7 @@ source /usr/local/Ascend/nnal/atb/set_env.sh
 export HCCL_NPU_SOCKET_PORT_RANGE=auto
 
 # 推荐
-export PYTHONPATH=.
+export PYTHONPATH=.:$PYTHONPATH
 ```
 
 ### 1.2 离线训练（建议）
