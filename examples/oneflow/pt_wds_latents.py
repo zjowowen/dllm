@@ -207,7 +207,9 @@ class WDSLatentsIterableDataset(torch.utils.data.IterableDataset):
         if not self._my_shards:
             raise ValueError(
                 f"Shard split produced empty shard list for rank={self.rank} world={self.world}. "
-                f"Total shards={len(shards)}"
+                f"Total shards={len(shards)}. "
+                "Fix: ensure num_shards >= world_size (recommended), e.g. re-shard into more tar files "
+                "(see scripts/oneflow/reshard_wds.py) or launch with fewer processes."
             )
 
     def _to_feature(self, sample: dict[str, Any]) -> dict[str, Any]:
@@ -255,7 +257,15 @@ class WDSLatentsIterableDataset(torch.utils.data.IterableDataset):
             self._my_shards,
             shardshuffle=int(self.shardshuffle),
             handler=wds.warn_and_continue,
+            # We already pre-split shards by (distributed) rank in __init__ via `self._my_shards`.
+            # WebDataset's default nodesplitter is `single_node_only`, which raises when world_size>1.
+            # Disable nodesplitting here to avoid the error and to prevent double-splitting.
+            nodesplitter=None,
             workersplitter=wds.split_by_worker,
+            # Some (rank, worker) pairs may legitimately receive 0 shards if
+            # `num_workers` > `len(_my_shards)`. In that case, allow the iterator
+            # to be empty and let PyTorch DataLoader continue with remaining workers.
+            empty_check=False,
         )
 
         if self.shuffle_buffer > 0:

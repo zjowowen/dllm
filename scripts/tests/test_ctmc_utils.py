@@ -33,6 +33,8 @@ def test_sample_from_logits_temperature_zero_is_argmax():
     logits = torch.tensor([0.1, 0.2, -0.3], dtype=torch.float32)
     assert sample_from_logits(logits, temperature=0.0) == 1
     assert sample_from_logits(logits, temperature=-1.0) == 1
+    # Suppress argmax -> should choose next-best
+    assert sample_from_logits(logits, temperature=0.0, suppress_token_ids=[1]) == 0
 
 
 def test_sample_from_logits_temperature_positive_in_range():

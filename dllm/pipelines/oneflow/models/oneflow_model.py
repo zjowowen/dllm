@@ -227,11 +227,109 @@ class OneFlowModel(nn.Module):
             out["kv_cache"] = kv_cache
         return out
 
+    def resize_token_embeddings(self, new_num_tokens: int) -> None:
+        """
+        Resize token-dependent modules to `new_num_tokens`.
+
+        This mirrors the small piece of HF `PreTrainedModel.resize_token_embeddings`
+        we need for OneFlowModel, since this model is a plain `nn.Module`.
+        """
+        new_num_tokens = int(new_num_tokens)
+        if new_num_tokens <= 0:
+            raise ValueError(f"new_num_tokens must be > 0, got {new_num_tokens}")
+
+        # ---- embedding -----------------------------------------------------------
+        old_embed = self.text_embed
+        old_n = int(old_embed.num_embeddings)
+        if new_num_tokens != old_n:
+            new_embed = nn.Embedding(new_num_tokens, old_embed.embedding_dim)
+            new_embed = new_embed.to(device=old_embed.weight.device, dtype=old_embed.weight.dtype)
+            # copy existing weights
+            n_copy = min(old_n, new_num_tokens)
+            with torch.no_grad():
+                new_embed.weight[:n_copy].copy_(old_embed.weight[:n_copy])
+                if new_num_tokens > old_n:
+                    nn.init.normal_(new_embed.weight[old_n:], mean=0.0, std=0.02)
+            self.text_embed = new_embed
+
+        # ---- output head (Q logits) ---------------------------------------------
+        old_q = self.to_q_logits
+        old_out = int(old_q.out_features)
+        if new_num_tokens != old_out:
+            new_q = nn.Linear(int(old_q.in_features), new_num_tokens, bias=True)
+            new_q = new_q.to(device=old_q.weight.device, dtype=old_q.weight.dtype)
+            n_copy = min(old_out, new_num_tokens)
+            with torch.no_grad():
+                new_q.weight[:n_copy].copy_(old_q.weight[:n_copy])
+                new_q.bias[:n_copy].copy_(old_q.bias[:n_copy])
+                if new_num_tokens > old_out:
+                    nn.init.normal_(new_q.weight[old_out:], mean=0.0, std=0.02)
+                    nn.init.zeros_(new_q.bias[old_out:])
+            self.to_q_logits = new_q
+
+        # keep config in sync
+        self.config.vocab_size = int(new_num_tokens)
+
     def save_pretrained(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
-        torch.save(self.state_dict(), os.path.join(output_dir, "pytorch_model.bin"))
+        # Save a CPU state_dict for portability:
+        # - avoids NPU-specific storages in `pytorch_model.bin`
+        # - loads cleanly with newer PyTorch defaults (`weights_only=True`)
+        # - allows inference/eval on CPU without requiring torch_npu/Ascend env
+        sd = self.state_dict()
+        sd_cpu = {k: (v.detach().to("cpu") if isinstance(v, torch.Tensor) else v) for k, v in sd.items()}
+        torch.save(sd_cpu, os.path.join(output_dir, "pytorch_model.bin"))
         with open(os.path.join(output_dir, "oneflow_config.json"), "w", encoding="utf-8") as f:
             json.dump(dataclasses.asdict(self.config), f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _resolve_oneflow_config_path(model_dir: str) -> str:
+        """
+        Resolve `oneflow_config.json` for a directory.
+
+        - Prefer `<model_dir>/oneflow_config.json`
+        - If `model_dir` is an intermediate HF Trainer checkpoint (checkpoint-xxxx),
+          allow falling back to:
+            - sibling `<parent>/checkpoint-final/oneflow_config.json`
+            - parent `<parent>/oneflow_config.json`
+        """
+        model_dir = str(model_dir)
+        direct = os.path.join(model_dir, "oneflow_config.json")
+        if os.path.exists(direct):
+            return direct
+
+        parent = os.path.dirname(os.path.abspath(model_dir))
+        sibling_final = os.path.join(parent, "checkpoint-final", "oneflow_config.json")
+        if os.path.exists(sibling_final):
+            return sibling_final
+
+        parent_cfg = os.path.join(parent, "oneflow_config.json")
+        if os.path.exists(parent_cfg):
+            return parent_cfg
+
+        return direct  # for error message
+
+    @staticmethod
+    def _resolve_state_dict_path(model_dir: str) -> tuple[str, str]:
+        """
+        Resolve weights file path.
+
+        Supports:
+          - `pytorch_model.bin` (our `save_pretrained`)
+          - `model.safetensors` (HF Trainer default when save_safetensors=True)
+
+        Returns:
+          (path, kind) where kind is "bin" or "safetensors".
+        """
+        model_dir = str(model_dir)
+        bin_path = os.path.join(model_dir, "pytorch_model.bin")
+        if os.path.exists(bin_path):
+            return bin_path, "bin"
+        st_path = os.path.join(model_dir, "model.safetensors")
+        if os.path.exists(st_path):
+            return st_path, "safetensors"
+        # keep the old expectation in the error message
+        return bin_path, "bin"
 
     @classmethod
     def from_pretrained(
@@ -240,16 +338,31 @@ class OneFlowModel(nn.Module):
         *,
         map_location: str | torch.device | None = None,
     ) -> "OneFlowModel":
-        cfg_path = os.path.join(model_dir, "oneflow_config.json")
-        sd_path = os.path.join(model_dir, "pytorch_model.bin")
+        cfg_path = cls._resolve_oneflow_config_path(model_dir)
         if not os.path.exists(cfg_path):
             raise FileNotFoundError(f"Missing config file: {cfg_path}")
+
+        sd_path, sd_kind = cls._resolve_state_dict_path(model_dir)
         if not os.path.exists(sd_path):
-            raise FileNotFoundError(f"Missing state dict file: {sd_path}")
+            raise FileNotFoundError(
+                f"Missing state dict file: {sd_path} "
+                f"(expected pytorch_model.bin or model.safetensors in {model_dir})"
+            )
+
         with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = OneFlowConfig(**json.load(f))
         model = cls(cfg)
-        sd = torch.load(sd_path, map_location=map_location)
+        if sd_kind == "safetensors":
+            try:
+                from safetensors.torch import load_file as safe_load_file
+            except Exception as e:  # pragma: no cover
+                raise ImportError(
+                    "Found model.safetensors but safetensors is not available. "
+                    "Please `pip install safetensors`."
+                ) from e
+            sd = safe_load_file(sd_path, device=str(map_location) if map_location is not None else "cpu")
+        else:
+            sd = torch.load(sd_path, map_location=map_location)
         model.load_state_dict(sd, strict=True)
         return model
 

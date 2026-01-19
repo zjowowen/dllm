@@ -19,8 +19,14 @@ import functools
 import os
 from dataclasses import dataclass
 
+# Avoid failing on non-Ascend machines that have torch_npu installed but do not have
+# Ascend runtime libraries (e.g. libhccl.so) configured. This script is CPU-only.
+os.environ.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
+
 import transformers
-from datasets import DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict
+
+from dllm.data.utils import _load_dataset_with_retry
 
 from dllm.pipelines.oneflow.utils import ONEFLOW_IMAGE_EOM, ONEFLOW_IMAGE_SOM, ONEFLOW_IMAGE_TOKEN
 from dllm.utils.utils import get_default_logger
@@ -41,6 +47,16 @@ class Args:
     seq_length: int = 256
     insert_eos: bool = True
     drop_tail: bool = True
+    # `tokenize_and_group` returns both input_ids and labels (labels==input_ids).
+    # OneFlow text-only pretraining only needs input_ids, so we drop labels by default
+    # to reduce disk usage for large corpora.
+    keep_labels: bool = False
+
+    # Use HF streaming mode to avoid downloading the full corpus.
+    # Recommended for very large datasets (e.g., dclm-baseline) when you only need
+    # a limited subset for offline export.
+    streaming: bool = False
+    tokenizer_batch_size: int = 256
 
     # optional limits for quick exports
     train_limit: int | None = None
@@ -72,36 +88,157 @@ def main():
     logger.info(f"Building tokenizer: {args.tokenizer_name_or_path}")
     tok = build_tokenizer(args.tokenizer_name_or_path)
 
-    logger.info(f"Loading raw dataset: {args.dataset_name_or_path}")
-    raw = load_dataset(args.dataset_name_or_path, name=args.dataset_config_name)
-    ds = DatasetDict()
-    ds["train"] = raw[args.train_split]
-    if args.test_split:
-        ds["test"] = raw[args.test_split]
+    # Allow disabling test split via CLI: --test_split None / "" / null
+    if args.test_split is not None and str(args.test_split).strip().lower() in ("", "none", "null", "nil"):
+        args.test_split = None
 
-    if args.train_limit is not None:
-        ds["train"] = ds["train"].select(range(min(args.train_limit, len(ds["train"]))))
-    if args.test_split and args.test_limit is not None:
-        ds["test"] = ds["test"].select(range(min(args.test_limit, len(ds["test"]))))
-
-    map_fn = functools.partial(
-        tokenize_and_group,
-        tokenizer=tok,
-        text_field=args.text_field,
-        seq_length=args.seq_length,
-        insert_eos=args.insert_eos,
-        drop_tail=args.drop_tail,
-        add_special_tokens=False,
+    logger.info(f"Loading raw dataset: {args.dataset_name_or_path} (streaming={bool(args.streaming)})")
+    raw = _load_dataset_with_retry(
+        args.dataset_name_or_path,
+        name=args.dataset_config_name,
+        streaming=bool(args.streaming),
     )
 
-    logger.info("Tokenizing & grouping...")
-    out = ds.map(
-        map_fn,
-        batched=True,
-        remove_columns=ds["train"].column_names,
-        num_proc=args.num_proc,
-        desc="Mapping dataset to PT format",
-    )
+    def build_pt_split_from_streaming(
+        split_iter,
+        *,
+        text_field: str,
+        limit: int | None,
+    ) -> Dataset:
+        """
+        Stream rows -> tokenize -> concatenate -> chunk into fixed-length input_ids.
+
+        Note:
+        - `limit` is number of raw rows consumed from the streaming dataset.
+        - resulting number of sequences depends on total token count.
+        """
+        it = split_iter.take(int(limit)) if limit is not None else split_iter
+
+        eos_id = int(tok.eos_token_id) if tok.eos_token_id is not None else None
+
+        buf: list[int] = []
+        buf_pos = 0
+        seqs: list[list[int]] = []
+
+        def flush_text_batch(texts: list[str]) -> None:
+            nonlocal buf, buf_pos
+            if not texts:
+                return
+            out_tok = tok(texts, add_special_tokens=False)
+            for ids in out_tok["input_ids"]:
+                if bool(args.insert_eos) and eos_id is not None:
+                    if (not ids) or int(ids[-1]) != eos_id:
+                        ids = list(ids) + [eos_id]
+                buf.extend([int(x) for x in ids])
+                while (len(buf) - buf_pos) >= int(args.seq_length):
+                    start = buf_pos
+                    end = buf_pos + int(args.seq_length)
+                    seqs.append(buf[start:end])
+                    buf_pos = end
+                # compact occasionally to avoid unbounded growth
+                if buf_pos > 1_000_000:
+                    buf = buf[buf_pos:]
+                    buf_pos = 0
+
+        batch: list[str] = []
+        n_rows = 0
+        bs = max(1, int(args.tokenizer_batch_size))
+        try:
+            for row in it:
+                if text_field not in row:
+                    raise KeyError(
+                        f"Missing text_field='{text_field}' in row keys={list(row.keys())}"
+                    )
+                t = row[text_field]
+                if not isinstance(t, str):
+                    t = str(t)
+                batch.append(t)
+                n_rows += 1
+                if len(batch) >= bs:
+                    flush_text_batch(batch)
+                    batch = []
+        except ValueError as e:
+            # Common for corpora stored as .zst when zstd decoder is missing.
+            if "compression type zstd not supported" in str(e).lower():
+                raise RuntimeError(
+                    "zstd (.zst) compression is not supported in this environment.\n"
+                    "Fix: `pip install zstandard` (recommended) or `pip install pyzstd`, then rerun."
+                ) from e
+            raise
+
+        if batch:
+            flush_text_batch(batch)
+
+        if not bool(args.drop_tail):
+            rem = buf[buf_pos:]
+            if rem:
+                seqs.append(rem)
+
+        logger.info(f"Streaming split consumed rows={n_rows}, produced sequences={len(seqs)}")
+        if bool(args.keep_labels):
+            return Dataset.from_dict({"input_ids": seqs, "labels": [s[:] for s in seqs]})
+        return Dataset.from_dict({"input_ids": seqs})
+
+    if bool(args.streaming):
+        # Streaming path: make train_limit/test_limit actually limit network IO.
+        ds_out = DatasetDict()
+        ds_out["train"] = build_pt_split_from_streaming(
+            raw[args.train_split],
+            text_field=args.text_field,
+            limit=args.train_limit,
+        )
+        if args.test_split and args.test_split in raw:
+            ds_out["test"] = build_pt_split_from_streaming(
+                raw[args.test_split],
+                text_field=args.text_field,
+                limit=args.test_limit,
+            )
+        out = ds_out
+    else:
+        # Non-streaming path: downloads/prepare full dataset (can be huge).
+        ds = DatasetDict()
+        ds["train"] = raw[args.train_split]
+        if args.test_split:
+            if args.test_split in raw:
+                ds["test"] = raw[args.test_split]
+            else:
+                logger.warning(
+                    f"Requested test_split='{args.test_split}' but dataset has splits={list(raw.keys())}. "
+                    "Skipping test split."
+                )
+
+        if args.train_limit is not None:
+            ds["train"] = ds["train"].select(range(min(args.train_limit, len(ds["train"]))))
+        if "test" in ds and args.test_limit is not None:
+            ds["test"] = ds["test"].select(range(min(args.test_limit, len(ds["test"]))))
+
+        map_fn = functools.partial(
+            tokenize_and_group,
+            tokenizer=tok,
+            text_field=args.text_field,
+            seq_length=args.seq_length,
+            insert_eos=args.insert_eos,
+            drop_tail=args.drop_tail,
+            add_special_tokens=False,
+        )
+
+        logger.info("Tokenizing & grouping...")
+        out = ds.map(
+            map_fn,
+            batched=True,
+            remove_columns=ds["train"].column_names,
+            num_proc=args.num_proc,
+            desc="Mapping dataset to PT format",
+        )
+
+    if (not bool(args.keep_labels)) and ("labels" in out["train"].column_names):
+        # Drop labels to save disk (OneFlow collator only uses `input_ids`).
+        out = DatasetDict(
+            {
+                name: (split.remove_columns("labels") if "labels" in split.column_names else split)
+                for name, split in out.items()
+            }
+        )
 
     # Ensure BOS
     bos_id = int(tok.bos_token_id)
@@ -110,6 +247,8 @@ def main():
         ids = row["input_ids"]
         if ids and ids[0] != bos_id:
             row["input_ids"] = [bos_id] + ids
+            if "labels" in row and isinstance(row["labels"], list):
+                row["labels"] = [bos_id] + row["labels"]
         return row
 
     out = out.map(add_bos, num_proc=args.num_proc, desc="Prepending BOS")

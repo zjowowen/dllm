@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
+import json
+import os
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -9,6 +13,19 @@ import transformers
 
 from dllm.core.schedulers import BaseKappaScheduler, CubicKappaScheduler
 from dllm.pipelines.ctmc_utils import pad_1d
+from dllm.pipelines.oneflow.losses import (
+    image_loss_flow_matching,
+    safe_log,
+    text_loss_paper_eq7_fast,
+    text_loss_paper_eq7_fast_from_logits,
+)
+from dllm.pipelines.oneflow.sequence_ops import (
+    apply_interleaved_image_schedule,
+    build_noised_xt_and_bags,
+    build_unified_train_batch,
+    sample_tau_text,
+    tau_to_t_text,
+)
 from dllm.pipelines.oneflow.utils import ONEFLOW_IMAGE_TOKEN
 from dllm.utils.configs import TrainingArguments
 
@@ -27,10 +44,39 @@ class OneFlowTrainer(transformers.Trainer):
     @dataclass
     class OneFlowConfig(TrainingArguments):
         time_epsilon: float = 1e-3
+        # Paper (arXiv:2510.03506, Sec 3.0.1): probability of sampling τ_text in [1,2]
+        # which corresponds to “clean text concurrently with image generation”.
+        # They report using 0 or 0.2.
+        mixed_generation_prob: float = 0.0
+        # Paper (Sec 2.1.1): insertion predictions are t-independent in practice.
+        # If False, we do NOT condition text-token heads (π/λ/Q) on t_text (times are set constant for text tokens).
+        condition_text_on_time: bool = False
+        # Text loss type:
+        # - "paper": Eq (7) with π BCE + Poisson on λ_nonzero for k>0, no w(t) reweighting.
+        # - "ctmc": legacy CTMC-style survival+positive term (EditFlow-like), weighted by w(t).
+        text_loss_type: str = "paper"
+        # Only used for text_loss_type="ctmc" (legacy): clamp w(t)=κ'(t)/(1-κ(t)) to avoid blow-ups.
         max_w: float = 20.0
         image_loss_weight: float = 1.0
         normalize_text_loss_by_length: bool = True
         normalize_image_loss_by_tokens: bool = True
+        # Debug helpers (off by default)
+        debug_log_first_batch: bool = False
+        # Log split losses (text/image) to logger integrations (e.g., W&B).
+        # These will be emitted at the same cadence as Trainer's `logging_steps`.
+        log_split_losses: bool = False
+        # Paper loss implementation:
+        # - False (default): compute full log-softmax then gather (usually faster / lower peak mem on NPU)
+        # - True: compute token CE from logits via logsumexp (may be slower / higher mem on some backends)
+        paper_loss_from_logits: bool = False
+        # ---- perf profiling helpers (off by default) ------------------------------
+        # Log step breakdown timings (ms) at `logging_steps` cadence.
+        profile_timing: bool = False
+        # Whether to synchronize device between timing sections for more accurate timings.
+        # Note: this can add overhead; keep False unless profiling.
+        profile_timing_sync: bool = False
+        # Log optimizer step time (ms) at `logging_steps` cadence.
+        profile_log_optimizer_time: bool = False
 
     def __init__(
         self,
@@ -41,6 +87,341 @@ class OneFlowTrainer(transformers.Trainer):
     ):
         super().__init__(args=args, *pargs, **kwargs)
         self.scheduler = scheduler if scheduler is not None else CubicKappaScheduler()
+        # For split-loss logging at `logging_steps` cadence.
+        self._oneflow_pending_logs: dict[int, dict[str, float]] = {}
+        self._oneflow_ga_micro_step: int = 0
+        self._oneflow_step_text_sum: float = 0.0
+        self._oneflow_step_img_sum: float = 0.0
+        self._oneflow_step_imgtok_sum: float = 0.0
+        self._oneflow_step_count: int = 0
+        self._oneflow_interval_text_sum: float = 0.0
+        self._oneflow_interval_img_sum: float = 0.0
+        self._oneflow_interval_imgtok_sum: float = 0.0
+        self._oneflow_interval_count: int = 0
+        # ---- perf timing buffers (rank0) -----------------------------------------
+        self._oneflow_last_profile: dict[str, float] | None = None
+        self._oneflow_prof_ga_micro_step: int = 0
+        self._oneflow_prof_step_sums: dict[str, float] = {}
+        self._oneflow_prof_step_count: int = 0
+        self._oneflow_prof_interval_sums: dict[str, float] = {}
+        self._oneflow_prof_interval_count: int = 0
+
+    @staticmethod
+    def _maybe_sync_device(device: torch.device) -> None:
+        """
+        Best-effort device sync for accurate wall timings when requested.
+        """
+        try:
+            if device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.synchronize(device)
+            elif device.type == "npu":
+                # torch-npu exposes torch.npu in many builds
+                if hasattr(torch, "npu") and hasattr(torch.npu, "synchronize"):
+                    torch.npu.synchronize()
+                else:  # pragma: no cover
+                    import torch_npu
+
+                    torch_npu.npu.synchronize()
+        except Exception:
+            # Never let profiling crash training
+            return
+
+    def _oneflow_track_profile_timings(
+        self,
+        *,
+        model,
+        timings_ms: dict[str, float],
+    ) -> None:
+        """
+        Track step breakdown timings and schedule them to be logged at `logging_steps`.
+
+        This mirrors `_oneflow_track_split_losses` behavior: we reduce across ranks, average across
+        gradient accumulation micro-steps, then average across the logging interval.
+        """
+        if not bool(getattr(self.args, "profile_timing", False)):
+            return
+        if model is None or (hasattr(model, "training") and (not model.training)):
+            return
+
+        # ---- reduce across ranks -------------------------------------------------
+        keys = [
+            "time_noising_ms",
+            "time_pad_ms",
+            "time_forward_ms",
+            "time_loss_ms",
+            "time_train_step_ms",
+        ]
+        dev = None
+        try:
+            dev = next(model.parameters()).device
+        except Exception:
+            dev = torch.device("cpu")
+        vals = torch.tensor([float(timings_ms.get(k, 0.0)) for k in keys], device=dev, dtype=torch.float32)
+        try:
+            vals = self.accelerator.reduce(vals, reduction="mean")
+        except Exception:
+            pass
+
+        # Only rank0 maintains logging buffers.
+        if not self.is_world_process_zero():
+            return
+
+        local = {k: float(vals[i].item()) for i, k in enumerate(keys)}
+
+        # ---- micro-step accumulation (for gradient accumulation) -----------------
+        self._oneflow_prof_ga_micro_step += 1
+        for k, v in local.items():
+            self._oneflow_prof_step_sums[k] = float(self._oneflow_prof_step_sums.get(k, 0.0) + float(v))
+        self._oneflow_prof_step_count += 1
+
+        ga = int(getattr(self.args, "gradient_accumulation_steps", 1) or 1)
+        ga = max(1, ga)
+        if (self._oneflow_prof_ga_micro_step % ga) != 0:
+            return
+
+        # finalize one optimizer step average
+        denom = max(1, self._oneflow_prof_step_count)
+        step_avg = {k: float(v / denom) for k, v in self._oneflow_prof_step_sums.items()}
+        self._oneflow_prof_step_sums = {}
+        self._oneflow_prof_step_count = 0
+
+        # ---- interval accumulation ----------------------------------------------
+        for k, v in step_avg.items():
+            self._oneflow_prof_interval_sums[k] = float(self._oneflow_prof_interval_sums.get(k, 0.0) + float(v))
+        self._oneflow_prof_interval_count += 1
+
+        logging_steps = int(getattr(self.args, "logging_steps", 0) or 0)
+        logging_steps = max(1, logging_steps)
+        next_step = int(getattr(getattr(self, "state", None), "global_step", 0) or 0) + 1
+        if (next_step % logging_steps) != 0:
+            return
+
+        denom2 = max(1, self._oneflow_prof_interval_count)
+        to_log = {k: float(v / denom2) for k, v in self._oneflow_prof_interval_sums.items()}
+        # Convert to shorter keys in logs.
+        payload = {
+            "time_noising_ms": float(to_log.get("time_noising_ms", 0.0)),
+            "time_pad_ms": float(to_log.get("time_pad_ms", 0.0)),
+            "time_forward_ms": float(to_log.get("time_forward_ms", 0.0)),
+            "time_loss_ms": float(to_log.get("time_loss_ms", 0.0)),
+            "time_train_step_ms": float(to_log.get("time_train_step_ms", 0.0)),
+        }
+        self._oneflow_pending_logs[int(next_step)] = {
+            **self._oneflow_pending_logs.get(int(next_step), {}),
+            **payload,
+        }
+
+        self._oneflow_prof_interval_sums = {}
+        self._oneflow_prof_interval_count = 0
+
+    def training_step(self, model, inputs, num_items_in_batch=None):  # type: ignore[override]
+        """
+        Wrap HF Trainer training_step to collect a coarse-grained train-step wall time.
+        """
+        prof_on = bool(getattr(self.args, "profile_timing", False))
+        if not prof_on:
+            return super().training_step(model, inputs, num_items_in_batch=num_items_in_batch)
+
+        dev = None
+        try:
+            dev = next(model.parameters()).device
+        except Exception:
+            dev = torch.device("cpu")
+
+        if bool(getattr(self.args, "profile_timing_sync", False)):
+            self._maybe_sync_device(dev)
+        t0 = time.perf_counter()
+        out = super().training_step(model, inputs, num_items_in_batch=num_items_in_batch)
+        if bool(getattr(self.args, "profile_timing_sync", False)):
+            self._maybe_sync_device(dev)
+        t1 = time.perf_counter()
+
+        # Merge with compute_loss breakdown (captured in compute_loss).
+        breakdown = self._oneflow_last_profile or {}
+        breakdown = dict(breakdown)
+        breakdown["time_train_step_ms"] = (t1 - t0) * 1000.0
+        self._oneflow_last_profile = None
+        self._oneflow_track_profile_timings(model=model, timings_ms=breakdown)
+        return out
+
+    def optimizer_step(self, *args, **kwargs):  # type: ignore[override]
+        """
+        Optionally time optimizer step and schedule it to be logged at `logging_steps` cadence.
+        """
+        if not bool(getattr(self.args, "profile_log_optimizer_time", False)):
+            return super().optimizer_step(*args, **kwargs)
+
+        model = getattr(self, "model", None)
+        dev = None
+        try:
+            dev = next(model.parameters()).device if model is not None else torch.device("cpu")
+        except Exception:
+            dev = torch.device("cpu")
+
+        if bool(getattr(self.args, "profile_timing_sync", False)):
+            self._maybe_sync_device(dev)
+        t0 = time.perf_counter()
+        out = super().optimizer_step(*args, **kwargs)
+        if bool(getattr(self.args, "profile_timing_sync", False)):
+            self._maybe_sync_device(dev)
+        t1 = time.perf_counter()
+
+        # Reduce across ranks, then schedule for logging on rank0.
+        ms = torch.tensor([(t1 - t0) * 1000.0], device=dev, dtype=torch.float32)
+        try:
+            ms = self.accelerator.reduce(ms, reduction="mean")
+        except Exception:
+            pass
+
+        if self.is_world_process_zero():
+            logging_steps = int(getattr(self.args, "logging_steps", 0) or 0)
+            logging_steps = max(1, logging_steps)
+            next_step = int(getattr(getattr(self, "state", None), "global_step", 0) or 0) + 1
+            if (next_step % logging_steps) == 0:
+                self._oneflow_pending_logs[int(next_step)] = {
+                    **self._oneflow_pending_logs.get(int(next_step), {}),
+                    "time_optim_step_ms": float(ms.item()),
+                }
+        return out
+
+    def log(self, logs: Dict[str, float], *args, **kwargs) -> None:
+        """
+        Inject pending OneFlow-specific metrics (e.g., split losses) into Trainer logs.
+
+        Trainer's internal logging uses `self.state.global_step` after optimizer step.
+        We queue metrics keyed by that step in `self._oneflow_pending_logs`, then
+        merge them here right before callbacks (W&B/TensorBoard) consume the logs.
+        """
+        step = int(getattr(getattr(self, "state", None), "global_step", 0) or 0)
+        extra = self._oneflow_pending_logs.pop(step, None) if isinstance(self._oneflow_pending_logs, dict) else None
+        if extra:
+            merged = dict(logs)
+            merged.update(extra)
+            return super().log(merged, *args, **kwargs)
+        return super().log(logs, *args, **kwargs)
+
+    def _oneflow_track_split_losses(
+        self,
+        *,
+        model,
+        loss_text: torch.Tensor,
+        loss_img: torch.Tensor,
+        img_tokens_total: float,
+    ) -> None:
+        """
+        Track split losses and schedule them to be logged at `logging_steps`.
+
+        Notes:
+        - We reduce losses across distributed ranks (mean) so the curve is stable.
+        - We average across gradient accumulation steps to match optimizer-step semantics.
+        - We further average across the interval between logs, mirroring Trainer's `loss`.
+        """
+        if not bool(getattr(self.args, "log_split_losses", False)):
+            return
+        if model is None or (hasattr(model, "training") and (not model.training)):
+            return
+
+        # Reduce across ranks (collective); must run on all processes.
+        lt = loss_text.detach()
+        li = loss_img.detach()
+        it = torch.tensor(float(img_tokens_total), device=lt.device, dtype=torch.float32)
+        try:
+            lt = self.accelerator.reduce(lt, reduction="mean")
+            li = self.accelerator.reduce(li, reduction="mean")
+            it = self.accelerator.reduce(it, reduction="mean")
+        except Exception:
+            # Single-process / no accelerator reduce available.
+            pass
+
+        # Only rank0 maintains logging buffers (after collectives have run).
+        if not self.is_world_process_zero():
+            return
+
+        # ---- micro-step accumulation (for gradient accumulation) -----------------
+        self._oneflow_ga_micro_step += 1
+        self._oneflow_step_text_sum += float(lt.item())
+        self._oneflow_step_img_sum += float(li.item())
+        self._oneflow_step_imgtok_sum += float(it.item())
+        self._oneflow_step_count += 1
+
+        ga = int(getattr(self.args, "gradient_accumulation_steps", 1) or 1)
+        ga = max(1, ga)
+        if (self._oneflow_ga_micro_step % ga) != 0:
+            return
+
+        # finalize one optimizer step average
+        step_text = self._oneflow_step_text_sum / max(1, self._oneflow_step_count)
+        step_img = self._oneflow_step_img_sum / max(1, self._oneflow_step_count)
+        step_imgtok = self._oneflow_step_imgtok_sum / max(1, self._oneflow_step_count)
+
+        self._oneflow_step_text_sum = 0.0
+        self._oneflow_step_img_sum = 0.0
+        self._oneflow_step_imgtok_sum = 0.0
+        self._oneflow_step_count = 0
+
+        # ---- interval accumulation (to mirror Trainer's `loss`) -------------------
+        self._oneflow_interval_text_sum += float(step_text)
+        self._oneflow_interval_img_sum += float(step_img)
+        self._oneflow_interval_imgtok_sum += float(step_imgtok)
+        self._oneflow_interval_count += 1
+
+        logging_steps = int(getattr(self.args, "logging_steps", 0) or 0)
+        logging_steps = max(1, logging_steps)
+        next_step = int(getattr(getattr(self, "state", None), "global_step", 0) or 0) + 1
+        if (next_step % logging_steps) != 0:
+            return
+
+        denom = max(1, self._oneflow_interval_count)
+        self._oneflow_pending_logs[int(next_step)] = {
+            "loss_text": float(self._oneflow_interval_text_sum / denom),
+            "loss_img": float(self._oneflow_interval_img_sum / denom),
+            "img_tokens_total": float(self._oneflow_interval_imgtok_sum / denom),
+        }
+
+        # reset interval buffers after scheduling a log
+        self._oneflow_interval_text_sum = 0.0
+        self._oneflow_interval_img_sum = 0.0
+        self._oneflow_interval_imgtok_sum = 0.0
+        self._oneflow_interval_count = 0
+
+    def _save(self, output_dir: Optional[str] = None, state_dict=None):
+        """
+        Ensure intermediate Trainer checkpoints are loadable by OneFlow utilities.
+
+        HF Trainer saves weights as `model.safetensors` by default, and (since our model
+        is not a HF PreTrainedModel) it won't save our custom `oneflow_config.json`.
+
+        We keep Trainer's default behavior (weights/tokenizer/training_args), and also
+        write `oneflow_config.json` into each checkpoint dir.
+        """
+        super()._save(output_dir=output_dir, state_dict=state_dict)
+
+        out_dir = output_dir if output_dir is not None else self.args.output_dir
+        cfg_path = os.path.join(out_dir, "oneflow_config.json")
+        if os.path.exists(cfg_path):
+            return
+
+        # Unwrap model from DDP/Accelerate wrappers.
+        try:
+            unwrapped = self.accelerator.unwrap_model(self.model, keep_torch_compile=False)
+        except Exception:
+            unwrapped = getattr(self.model, "module", self.model)
+
+        cfg = getattr(unwrapped, "config", None)
+        if cfg is None:
+            return
+
+        if dataclasses.is_dataclass(cfg):
+            cfg_dict = dataclasses.asdict(cfg)
+        elif hasattr(cfg, "to_dict"):
+            cfg_dict = cfg.to_dict()
+        elif isinstance(cfg, dict):
+            cfg_dict = cfg
+        else:
+            return
+
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg_dict, f, ensure_ascii=False, indent=2)
 
     def compute_loss(
         self,
@@ -49,6 +430,10 @@ class OneFlowTrainer(transformers.Trainer):
         return_outputs: bool = False,
         **kwargs,
     ):
+        prof_on = bool(getattr(self.args, "profile_timing", False))
+        prof_sync = bool(getattr(self.args, "profile_timing_sync", False))
+        prof_times: dict[str, float] = {}
+
         # ---- inputs (text-only v1) -------------------------------------------------
         if "x1_ids" not in inputs:
             raise KeyError(
@@ -76,14 +461,36 @@ class OneFlowTrainer(transformers.Trainer):
 
         device = next(model.parameters()).device
 
-        # ---- sample tau_text ~ Unif[0,2], set t_text=min(1,tau_text) ---------------
-        tau_text = 2.0 * torch.rand((B, 1), device=device)
-        t_text = torch.minimum(tau_text, torch.ones_like(tau_text))  # [B,1] in [0,1]
+        if prof_on and prof_sync:
+            self._maybe_sync_device(device)
 
-        k = self.scheduler.kappa(t_text).to(device)  # [B,1]
-        w = self.scheduler.weight(t_text).squeeze(1).to(device)  # [B]
-        if getattr(self.args, "max_w", None):
-            w = w.clamp(max=float(self.args.max_w))
+        # ---- sample τ_text and derive t_text --------------------------------------
+        # IMPORTANT (perf): discrete noising builds python lists (X_t + bags) and historically
+        # used `.tolist()` on NPU tensors, which forces NPU->CPU synchronization. For text-only,
+        # we keep τ/t/κ and keep-mask sampling on CPU, then only move padded tensors to NPU.
+        t0 = time.perf_counter() if prof_on else 0.0
+        cpu = torch.device("cpu")
+        tau_text_cpu = sample_tau_text(
+            batch_size=B,
+            device=cpu,
+            mixed_generation_prob=float(getattr(self.args, "mixed_generation_prob", 0.0) or 0.0),
+        )
+        t_text_cpu = tau_to_t_text(tau_text_cpu)  # [B,1] in [0,1]
+
+        # Keep a device copy for model time conditioning and (optional) mixed-modal schedule.
+        tau_text = tau_text_cpu.to(device)
+        t_text = t_text_cpu.to(device)
+
+        # Token keep prob κ(t_text) for discrete noising (compute on CPU to avoid device sync)
+        k_keep_cpu = self.scheduler.kappa(t_text_cpu).to(cpu)  # [B,1]
+
+        # Legacy CTMC-style loss uses w(t)=κ'(t)/(1-κ(t)); paper loss (Eq 7) does NOT.
+        text_loss_type = str(getattr(self.args, "text_loss_type", "paper") or "paper").lower().strip()
+        w: torch.Tensor | None = None
+        if text_loss_type == "ctmc":
+            w = self.scheduler.weight(t_text).squeeze(1).to(device)  # [B]
+            if getattr(self.args, "max_w", None):
+                w = w.clamp(max=float(self.args.max_w))
 
         # ---- optional images (pre-encoded latents) --------------------------------
         # `image_latents[b]` can be:
@@ -107,157 +514,70 @@ class OneFlowTrainer(transformers.Trainer):
                     "Please add it as a special token before training."
                 )
 
-        # ---- build X_t and bag-of-tokens A_j ---------------------------------------
-        xt_list: list[list[int]] = []
-        bags_list: list[list[list[int]]] = []  # per-sample: list of bags aligned to xt positions
-        # For mixed-modal: store per-sample kept image latents and per-image t_img
-        kept_images_list: list[list[torch.Tensor]] = []
-        kept_timg_list: list[list[float]] = []
+        # ---- build X_t and bag-of-tokens A_i --------------------------------------
+        noised = build_noised_xt_and_bags(
+            x1_ids=x1_ids,
+            kappa_keep=k_keep_cpu,
+            device=cpu,
+            prompt_len_list=prompt_len_list,
+            image_token_id=image_token_id,
+            disallow_image_in_prompt=True,
+        )
+        xt_list = noised.xt_list
+        bags_list = noised.bags_list
 
-        for x1, kb in zip(x1_ids, k.squeeze(1).tolist()):
-            b_idx = len(xt_list)
-            if not x1:
-                raise ValueError("Empty x1_ids is not supported for OneFlow training.")
+        if prof_on:
+            if prof_sync:
+                self._maybe_sync_device(device)
+            prof_times["time_noising_ms"] = (time.perf_counter() - t0) * 1000.0
 
-            # If prompt_len is provided (SFT), do not edit the prompt prefix:
-            # force-keep all prompt tokens so no deletions/insertions occur inside.
-            pl: int | None = None
-            if prompt_len_list is not None:
-                pl = int(prompt_len_list[b_idx])
-                if pl <= 0 or pl > len(x1):
-                    raise ValueError(
-                        f"Invalid prompt_len={pl} for sample {b_idx}: x1 length={len(x1)}"
-                    )
-                # v1 limitation: do not support conditioning on images inside the prompt.
-                if image_token_id is not None and any(
-                    int(t) == int(image_token_id) for t in x1[:pl]
-                ):
-                    raise ValueError(
-                        f"prompt_len spans over {ONEFLOW_IMAGE_TOKEN} for sample {b_idx}. "
-                        "OneFlow v1 does not support conditioning on prompt images. "
-                        "Please place image tokens after the prompt, or omit prompt_len."
-                    )
-
-            # per-token keep with prob kappa(t); BOS must be kept
-            keep = (torch.rand(len(x1), device=device) < float(kb)).tolist()
-            keep[0] = True
-            if pl is not None:
-                for i in range(pl):
-                    keep[i] = True
-            # If training with images, force-keep the image placeholder tokens so that
-            # image insertion/deletion is governed by the interleaved τ_img schedule.
-            if image_token_id is not None:
-                for idx, tok_id in enumerate(x1):
-                    if int(tok_id) == int(image_token_id):
-                        keep[idx] = True
-
-            xt: list[int] = []
-            bags: list[list[int]] = []
-            for token_id, is_keep in zip(x1, keep):
-                if is_keep:
-                    xt.append(int(token_id))
-                    bags.append([])
-                else:
-                    # BOS is forced kept, so bags is non-empty here
-                    bags[-1].append(int(token_id))
-
-            # --- interleaved image schedule (Algorithm 3, lines 16-28) ---
-            # If no images, keep as-is.
-            if not has_images:
-                xt_list.append(xt)
-                bags_list.append(bags)
-                kept_images_list.append([])
-                kept_timg_list.append([])
-                continue
-
-            # Standardize images for this sample
-            raw = image_latents_raw[b_idx]
-            if raw is None:
-                images = []
-            elif isinstance(raw, list):
-                images = raw
-            else:
-                images = [raw]
-
-            # Validate count: images must match number of image tokens in ground truth x1
-            num_img_tokens_x1 = sum(int(t) == int(image_token_id) for t in x1)
-            if num_img_tokens_x1 != len(images):
-                raise ValueError(
-                    f"Mismatch between number of {ONEFLOW_IMAGE_TOKEN} tokens in x1 "
-                    f"({num_img_tokens_x1}) and provided image latents ({len(images)})."
-                )
-
-            # Locate image tokens in xt (forced kept, so count must match)
-            img_pos_xt = [i for i, t in enumerate(xt) if int(t) == int(image_token_id)]
-            if len(img_pos_xt) != len(images):
-                raise ValueError(
-                    f"Internal error: expected {len(images)} image tokens in X_t, got {len(img_pos_xt)}."
-                )
-
-            # Sample τ_img per image: τ_img = τ_text - κ^{-1}(u)
-            tau_text_b = float(tau_text[b_idx, 0].item())
-            delete_flags: list[bool] = []
-            timgs: list[float] = []
-            for _ in images:
-                u = torch.rand((), device=device)
-                inv = self.scheduler.kappa_inverse(u)
-                tau_img = tau_text_b - float(inv.item() if isinstance(inv, torch.Tensor) else inv)
-                if tau_img < 0.0:
-                    delete_flags.append(True)
-                    timgs.append(0.0)
-                else:
-                    delete_flags.append(False)
-                    timgs.append(float(min(1.0, tau_img)))
-
-            # Remove deleted images from xt/bags (right-to-left to keep indices stable)
-            for j in reversed(range(len(images))):
-                if not delete_flags[j]:
-                    continue
-                pos = img_pos_xt[j]
-                if pos <= 0:
-                    raise AssertionError("Image token cannot be at position 0 (BOS slot).")
-                # Add the deleted image token into the previous bag, and merge the bag-after-image.
-                bags[pos - 1].append(int(image_token_id))
-                bags[pos - 1].extend(bags[pos])
-                del bags[pos]
-                del xt[pos]
-
-            # Keep remaining images in order
-            kept_images: list[torch.Tensor] = []
-            kept_timgs: list[float] = []
-            for img, is_del, ti in zip(images, delete_flags, timgs):
-                if is_del:
-                    continue
-                kept_images.append(img)
-                kept_timgs.append(ti)
-
-            # Validate remaining image token count matches kept images
-            img_pos_xt_after = [i for i, t in enumerate(xt) if int(t) == int(image_token_id)]
-            if len(img_pos_xt_after) != len(kept_images):
-                raise ValueError(
-                    f"After τ_img deletion, expected {len(kept_images)} image tokens in X_t "
-                    f"but found {len(img_pos_xt_after)}."
-                )
-
-            xt_list.append(xt)
-            bags_list.append(bags)
-            kept_images_list.append(kept_images)
-            kept_timg_list.append(kept_timgs)
+        kept_images_list: list[list[torch.Tensor]] = [[] for _ in range(B)]
+        kept_timg_list: list[list[float]] = [[] for _ in range(B)]
+        if has_images:
+            if image_token_id is None:
+                raise RuntimeError("has_images=True but image_token_id is None.")
+            inter = apply_interleaved_image_schedule(
+                x1_ids=x1_ids,
+                xt_list=xt_list,
+                bags_list=bags_list,
+                image_latents_raw=image_latents_raw,
+                tau_text=tau_text,
+                scheduler=self.scheduler,
+                image_token_id=int(image_token_id),
+                device=device,
+            )
+            xt_list = inter.xt_list
+            bags_list = inter.bags_list
+            kept_images_list = inter.kept_images_list
+            kept_timg_list = inter.kept_timg_list
 
         pad_id = int(self.processing_class.pad_token_id)
 
         # If no images are present in the batch, keep the simple text-only path
         if not has_images:
+            t_pad0 = time.perf_counter() if prof_on else 0.0
             # ---- pad X_t for the model --------------------------------------------
             x_tok, x_mask = pad_1d(xt_list, pad_val=pad_id)  # [B,L], [B,L]
             x_tok = x_tok.to(device)
             x_mask = x_mask.to(device)
 
-            # per-token time conditioning (broadcast t_text across positions)
+            # per-token time conditioning
+            # Paper (Sec 2.1.1) uses t-independent insertions in practice. We follow that by
+            # default: text tokens get a constant time value, while the noising schedule is
+            # still governed by t_text in κ(t_text).
             Lmax = x_tok.shape[1]
-            times = t_text.expand(B, Lmax)  # [B,L]
+            if bool(getattr(self.args, "condition_text_on_time", False)):
+                times = t_text.expand(B, Lmax)  # [B,L]
+            else:
+                times = torch.zeros((B, Lmax), device=device, dtype=torch.float32)
+
+            if prof_on:
+                if prof_sync:
+                    self._maybe_sync_device(device)
+                prof_times["time_pad_ms"] = (time.perf_counter() - t_pad0) * 1000.0
 
             # ---- forward ----------------------------------------------------------
+            t_fwd0 = time.perf_counter() if prof_on else 0.0
             out = model(
                 input_ids=x_tok,
                 attention_mask=x_mask,
@@ -266,6 +586,11 @@ class OneFlowTrainer(transformers.Trainer):
                 modality_positions=None,
                 times=times,
             )
+
+            if prof_on:
+                if prof_sync:
+                    self._maybe_sync_device(device)
+                prof_times["time_forward_ms"] = (time.perf_counter() - t_fwd0) * 1000.0
 
             pi = out["pi"]  # [B,L]
             lam = out["lambda_nonzero"]  # [B,L]
@@ -279,164 +604,106 @@ class OneFlowTrainer(transformers.Trainer):
                 + out["v"].sum() * 0.0
             )
 
-            logQ = F.log_softmax(q_logits, dim=-1)
+            # ---- text loss ---------------------------------------------------------
+            t_loss0 = time.perf_counter() if prof_on else 0.0
+            if text_loss_type == "ctmc":
+                if w is None:
+                    raise RuntimeError("text_loss_type='ctmc' requires w(t) but w is None.")
+                logQ = F.log_softmax(q_logits, dim=-1)
+                # CTMC-style loss (legacy): survival + positive term, weighted by w(t).
+                mask_f = x_mask.float()
+                Lambda_hat = (lam * mask_f).sum(dim=1)  # [B]
+                L1 = torch.tensor([len(x) for x in x1_ids], device=device, dtype=torch.float)
+                denom = (
+                    L1.clamp_min(1.0)
+                    if bool(getattr(self.args, "normalize_text_loss_by_length", True))
+                    else torch.ones_like(L1)
+                )
+                loss_surv = ((w * Lambda_hat) / denom).mean()
 
-            def safe_log(x: torch.Tensor) -> torch.Tensor:
-                return torch.log(x.clamp_min(1e-12))
-
-            # ---- text survival term -----------------------------------------------
-            mask_f = x_mask.float()
-            Lambda_hat = (lam * mask_f).sum(dim=1)  # [B]
-            L1 = torch.tensor([len(x) for x in x1_ids], device=device, dtype=torch.float)
-            denom = (
-                L1.clamp_min(1.0)
-                if bool(getattr(self.args, "normalize_text_loss_by_length", True))
-                else torch.ones_like(L1)
-            )
-            loss_surv = ((w * Lambda_hat) / denom).mean()
-
-            # ---- positive term -----------------------------------------------------
-            pos_terms = []
-            for b in range(B):
-                lp = x_tok.new_zeros((), dtype=torch.float32)
-                cur_len = int(x_mask[b].sum().item())
-                for i in range(cur_len):
-                    bag = bags_list[b][i]
-                    if not bag:
-                        continue
-                    lp = lp - safe_log(lam[b, i]) * float(len(bag))
-                    tok = torch.tensor(bag, device=device, dtype=torch.long)
-                    lp = lp - logQ[b, i].gather(dim=-1, index=tok).sum()
-                pos_terms.append(lp)
-            loss_pos_per = torch.stack(pos_terms)  # [B]
-            loss_pos = ((w * loss_pos_per) / denom).mean()
-
-            loss_text = loss_surv + loss_pos
+                pos_terms = []
+                for b in range(B):
+                    lp = x_tok.new_zeros((), dtype=torch.float32)
+                    cur_len = int(x_mask[b].sum().item())
+                    for i in range(cur_len):
+                        bag = bags_list[b][i]
+                        if not bag:
+                            continue
+                        lp = lp - safe_log(lam[b, i]) * float(len(bag))
+                        tok = torch.tensor(bag, device=device, dtype=torch.long)
+                        lp = lp - logQ[b, i].gather(dim=-1, index=tok).sum()
+                    pos_terms.append(lp)
+                loss_pos_per = torch.stack(pos_terms)  # [B]
+                loss_pos = ((w * loss_pos_per) / denom).mean()
+                loss_text = loss_surv + loss_pos
+            else:
+                if bool(getattr(self.args, "paper_loss_from_logits", False)):
+                    tl = text_loss_paper_eq7_fast_from_logits(
+                        pi=pi,
+                        lam=lam,
+                        q_logits=q_logits,
+                        bags_list=bags_list,
+                        xt_positions=None,
+                        normalize_by_n=bool(
+                            getattr(self.args, "normalize_text_loss_by_length", True)
+                        ),
+                    )
+                else:
+                    logQ = F.log_softmax(q_logits, dim=-1)
+                    tl = text_loss_paper_eq7_fast(
+                        pi=pi,
+                        lam=lam,
+                        logQ=logQ,
+                        bags_list=bags_list,
+                        xt_positions=None,
+                        normalize_by_n=bool(
+                            getattr(self.args, "normalize_text_loss_by_length", True)
+                        ),
+                    )
+                loss_text = tl.total
+            if prof_on:
+                if prof_sync:
+                    self._maybe_sync_device(device)
+                prof_times["time_loss_ms"] = (time.perf_counter() - t_loss0) * 1000.0
             loss = loss_text + anchor
+            # split-loss logging (text-only: loss_img=0)
+            self._oneflow_track_split_losses(
+                model=model,
+                loss_text=loss_text,
+                loss_img=torch.zeros_like(loss_text),
+                img_tokens_total=0.0,
+            )
+            # Store breakdown for `training_step` to aggregate & log.
+            if prof_on:
+                self._oneflow_last_profile = prof_times
             return (loss, out) if return_outputs else loss
 
         # ---- mixed-modal path: build unified sequences with inserted latent tokens ---
         dim_latent = int(getattr(getattr(model, "config", None), "dim_latent", 4))
+        if image_token_id is None:
+            raise RuntimeError("Mixed-modal path requires image_token_id but got None.")
 
-        def flatten_latent(y: torch.Tensor) -> torch.Tensor:
-            # Accept shapes:
-            # - [N, d]
-            # - [d, H, W] (channel-first)
-            # - [H, W, d] (channel-last)
-            if y.dim() == 2 and y.shape[-1] == dim_latent:
-                return y
-            if y.dim() == 3:
-                if y.shape[0] == dim_latent:
-                    y = y.permute(1, 2, 0).contiguous()  # [H,W,d]
-                elif y.shape[-1] != dim_latent:
-                    raise ValueError(f"Unrecognized latent shape: {tuple(y.shape)}")
-                return y.reshape(-1, dim_latent)
-            raise ValueError(f"Unrecognized latent tensor ndim={y.dim()} shape={tuple(y.shape)}")
+        unified, flow_tgt = build_unified_train_batch(
+            xt_list=xt_list,
+            bags_list=bags_list,
+            kept_images_list=kept_images_list,
+            kept_timg_list=kept_timg_list,
+            t_text=t_text,
+            image_token_id=int(image_token_id),
+            pad_id=pad_id,
+            dim_latent=dim_latent,
+            condition_text_on_time=bool(getattr(self.args, "condition_text_on_time", False)),
+            device=device,
+        )
 
-        total_ids_list: list[list[int]] = []
-        total_is_mod_list: list[list[bool]] = []
-        total_mod_tokens_list: list[list[torch.Tensor]] = []
-        total_flow_targets_list: list[list[torch.Tensor]] = []
-        total_times_list: list[list[float]] = []
-        modality_positions_list: list[list[tuple[int, int, int]]] = []
-        xt_to_total_pos_list: list[list[int]] = []
-
-        zero_lat = torch.zeros((dim_latent,), device=device, dtype=torch.float32)
-
-        for b in range(B):
-            xt = xt_list[b]
-            bags = bags_list[b]
-            images = kept_images_list[b]
-            timgs = kept_timg_list[b]
-
-            ids: list[int] = []
-            is_mod: list[bool] = []
-            mod_tokens: list[torch.Tensor] = []
-            flow_targets: list[torch.Tensor] = []
-            times_b: list[float] = []
-            mod_pos: list[tuple[int, int, int]] = []
-            xt_to_total: list[int] = []
-
-            t_text_b = float(t_text[b, 0].item())
-            img_counter = 0
-
-            for i, tok_id in enumerate(xt):
-                xt_to_total.append(len(ids))
-                ids.append(int(tok_id))
-                is_mod.append(False)
-                mod_tokens.append(zero_lat)
-                flow_targets.append(zero_lat)
-                times_b.append(t_text_b)
-
-                if int(tok_id) == int(image_token_id) and img_counter < len(images):
-                    y1 = images[img_counter].to(device=device, dtype=torch.float32)
-                    ti = float(timgs[img_counter])
-                    y0 = torch.randn_like(y1)
-                    yt = ti * y1 + (1.0 - ti) * y0
-                    flow = y1 - y0
-
-                    yt_tok = flatten_latent(yt)
-                    flow_tok = flatten_latent(flow)
-                    n_img = int(yt_tok.shape[0])
-
-                    # modality block starts at next position
-                    offset = len(ids)
-                    mod_pos.append((0, offset, n_img))
-
-                    for j in range(n_img):
-                        ids.append(pad_id)  # dummy ids for modality tokens
-                        is_mod.append(True)
-                        mod_tokens.append(yt_tok[j])
-                        flow_targets.append(flow_tok[j])
-                        times_b.append(ti)
-
-                    img_counter += 1
-
-            if img_counter != len(images):
-                raise ValueError(
-                    f"Did not consume all kept images: used {img_counter}, expected {len(images)}."
-                )
-            if len(bags) != len(xt_to_total):
-                raise AssertionError("bags must align with X_t token positions.")
-
-            total_ids_list.append(ids)
-            total_is_mod_list.append(is_mod)
-            total_mod_tokens_list.append(mod_tokens)
-            total_flow_targets_list.append(flow_targets)
-            total_times_list.append(times_b)
-            modality_positions_list.append(mod_pos)
-            xt_to_total_pos_list.append(xt_to_total)
-
-        # pad unified sequences
-        x_tok, x_mask = pad_1d(total_ids_list, pad_val=pad_id)  # [B,L], [B,L]
-        x_tok = x_tok.to(device)
-        x_mask = x_mask.to(device)
-        Lmax = x_tok.shape[1]
-
-        # pad modality tokens / flow targets / times / is_modality
-        mod_tok = torch.zeros((B, Lmax, dim_latent), device=device, dtype=torch.float32)
-        flow_tgt = torch.zeros((B, Lmax, dim_latent), device=device, dtype=torch.float32)
-        is_mod = torch.zeros((B, Lmax), device=device, dtype=torch.bool)
-        times = torch.zeros((B, Lmax), device=device, dtype=torch.float32)
-
-        for b in range(B):
-            Lb = len(total_ids_list[b])
-            is_mod[b, :Lb] = torch.tensor(total_is_mod_list[b], device=device, dtype=torch.bool)
-            times[b, :Lb] = torch.tensor(total_times_list[b], device=device, dtype=torch.float32)
-            mod_tok[b, :Lb] = torch.stack(total_mod_tokens_list[b], dim=0)
-            flow_tgt[b, :Lb] = torch.stack(total_flow_targets_list[b], dim=0)
-
-        # pad modality_positions
-        Mmax = max((len(m) for m in modality_positions_list), default=0)
-        if Mmax > 0:
-            mod_pos_tensor = torch.zeros((B, Mmax, 3), device=device, dtype=torch.long)
-            for b in range(B):
-                for j, (mt, off, ln) in enumerate(modality_positions_list[b]):
-                    mod_pos_tensor[b, j, 0] = int(mt)
-                    mod_pos_tensor[b, j, 1] = int(off)
-                    mod_pos_tensor[b, j, 2] = int(ln)
-        else:
-            mod_pos_tensor = None
+        x_tok = unified.input_ids
+        x_mask = unified.attention_mask
+        is_mod = unified.is_any_modality
+        mod_tok = unified.modality_tokens
+        flow_tgt = unified.flow_targets
+        times = unified.times
+        mod_pos_tensor = unified.modality_positions
+        xt_to_total_pos_list = unified.xt_to_total_pos_list
 
         # ---- forward on unified sequence -----------------------------------------
         out = model(
@@ -460,62 +727,113 @@ class OneFlowTrainer(transformers.Trainer):
             + out["v"].sum() * 0.0
         )
 
-        logQ = F.log_softmax(q_logits, dim=-1)
+        # ---- text loss (only over X_t token positions, not modality tokens) --------
+        if text_loss_type == "ctmc":
+            if w is None:
+                raise RuntimeError("text_loss_type='ctmc' requires w(t) but w is None.")
+            logQ = F.log_softmax(q_logits, dim=-1)
+            # CTMC-style loss (legacy): survival + positive term, weighted by w(t).
+            Lambda_hat = torch.zeros((B,), device=device, dtype=torch.float32)
+            for b in range(B):
+                pos_idx = torch.tensor(xt_to_total_pos_list[b], device=device, dtype=torch.long)
+                Lambda_hat[b] = lam[b].gather(dim=0, index=pos_idx).sum()
 
-        def safe_log(x: torch.Tensor) -> torch.Tensor:
-            return torch.log(x.clamp_min(1e-12))
+            L1 = torch.tensor([len(x) for x in x1_ids], device=device, dtype=torch.float)
+            denom = (
+                L1.clamp_min(1.0)
+                if bool(getattr(self.args, "normalize_text_loss_by_length", True))
+                else torch.ones_like(L1)
+            )
+            loss_surv = ((w * Lambda_hat) / denom).mean()
 
-        # ---- text survival term (only over X_t token positions, not modality tokens) ---
-        Lambda_hat = torch.zeros((B,), device=device, dtype=torch.float32)
-        for b in range(B):
-            pos_idx = torch.tensor(xt_to_total_pos_list[b], device=device, dtype=torch.long)
-            Lambda_hat[b] = lam[b].gather(dim=0, index=pos_idx).sum()
+            pos_terms = []
+            for b in range(B):
+                lp = x_tok.new_zeros((), dtype=torch.float32)
+                xt_pos = xt_to_total_pos_list[b]
+                for i, pos in enumerate(xt_pos):
+                    bag = bags_list[b][i]
+                    if not bag:
+                        continue
+                    lp = lp - safe_log(lam[b, pos]) * float(len(bag))
+                    tok = torch.tensor(bag, device=device, dtype=torch.long)
+                    lp = lp - logQ[b, pos].gather(dim=-1, index=tok).sum()
+                pos_terms.append(lp)
 
-        L1 = torch.tensor([len(x) for x in x1_ids], device=device, dtype=torch.float)
-        denom = (
-            L1.clamp_min(1.0)
-            if bool(getattr(self.args, "normalize_text_loss_by_length", True))
-            else torch.ones_like(L1)
-        )
-        loss_surv = ((w * Lambda_hat) / denom).mean()
-
-        # ---- positive term (bag-of-tokens insertions) ------------------------------
-        pos_terms = []
-        for b in range(B):
-            lp = x_tok.new_zeros((), dtype=torch.float32)
-            xt_pos = xt_to_total_pos_list[b]
-            for i, pos in enumerate(xt_pos):
-                bag = bags_list[b][i]
-                if not bag:
-                    continue
-                # -sum_a (log λ_i + log Q_i(a))
-                lp = lp - safe_log(lam[b, pos]) * float(len(bag))
-                # token logprobs
-                tok = torch.tensor(bag, device=device, dtype=torch.long)
-                lp = lp - logQ[b, pos].gather(dim=-1, index=tok).sum()
-            pos_terms.append(lp)
-
-        loss_pos_per = torch.stack(pos_terms)  # [B]
-        loss_pos = ((w * loss_pos_per) / denom).mean()
-
-        loss_text = loss_surv + loss_pos
+            loss_pos_per = torch.stack(pos_terms)  # [B]
+            loss_pos = ((w * loss_pos_per) / denom).mean()
+            loss_text = loss_surv + loss_pos
+        else:
+            if bool(getattr(self.args, "paper_loss_from_logits", False)):
+                tl = text_loss_paper_eq7_fast_from_logits(
+                    pi=pi,
+                    lam=lam,
+                    q_logits=q_logits,
+                    bags_list=bags_list,
+                    xt_positions=xt_to_total_pos_list,
+                    normalize_by_n=bool(getattr(self.args, "normalize_text_loss_by_length", True)),
+                )
+            else:
+                logQ = F.log_softmax(q_logits, dim=-1)
+                tl = text_loss_paper_eq7_fast(
+                    pi=pi,
+                    lam=lam,
+                    logQ=logQ,
+                    bags_list=bags_list,
+                    xt_positions=xt_to_total_pos_list,
+                    normalize_by_n=bool(getattr(self.args, "normalize_text_loss_by_length", True)),
+                )
+            loss_text = tl.total
 
         # ---- image flow matching loss --------------------------------------------
         v = out["v"]  # [B,L,dim_latent]
-        img_mask = is_mod.float()  # [B,L]
-        if img_mask.sum().item() > 0:
-            sq = (v - flow_tgt).pow(2).sum(dim=-1)  # [B,L]
-            img_sum = (sq * img_mask).sum()
-            if bool(getattr(self.args, "normalize_image_loss_by_tokens", True)):
-                denom_img = img_mask.sum().clamp_min(1.0)
-                loss_img = img_sum / denom_img
-            else:
-                loss_img = img_sum / float(B)
-        else:
-            loss_img = torch.zeros((), device=device, dtype=torch.float32)
+        img = image_loss_flow_matching(
+            v=v,
+            flow_tgt=flow_tgt,
+            is_any_modality=is_mod,
+            normalize_by_tokens=bool(getattr(self.args, "normalize_image_loss_by_tokens", True)),
+        )
+        loss_img = img.loss
 
         image_w = float(getattr(self.args, "image_loss_weight", 1.0))
         loss = loss_text + image_w * loss_img + anchor
+        # split-loss logging (schedule at logging_steps cadence)
+        self._oneflow_track_split_losses(
+            model=model,
+            loss_text=loss_text,
+            loss_img=loss_img,
+            img_tokens_total=float(img.tokens_total.item()),
+        )
+
+        # ---- optional debug (print once, rank0) ----------------------------------
+        if bool(getattr(self.args, "debug_log_first_batch", False)) and self.is_world_process_zero():
+            if not hasattr(self, "_oneflow_debug_first_batch_printed"):
+                setattr(self, "_oneflow_debug_first_batch_printed", True)
+                try:
+                    step = int(getattr(getattr(self, "state", None), "global_step", -1))
+                except Exception:
+                    step = -1
+                # show a tiny preview of the first sample for sanity
+                x0 = x1_ids[0] if x1_ids else []
+                num_img_tok_x0 = (
+                    int(sum(int(t) == int(image_token_id) for t in x0)) if image_token_id is not None else 0
+                )
+                try:
+                    preview = (
+                        self.processing_class.decode(x0[:80], skip_special_tokens=False)
+                        if getattr(self, "processing_class", None) is not None
+                        else ""
+                    )
+                except Exception:
+                    preview = ""
+                print(
+                    "\n[oneflow-debug] first batch summary:\n"
+                    f"  step={step} B={B} has_images={has_images}\n"
+                    f"  img_tokens_total={float(img.tokens_total.item())} (modality token positions)\n"
+                    f"  loss_text={float(loss_text.item()):.6f} loss_img={float(loss_img.item()):.6f} image_w={image_w}\n"
+                    f"  sample0_len={len(x0)} sample0_num_image_tokens={num_img_tok_x0}\n"
+                    + (f"  sample0_preview={preview}\n" if preview else "")
+                )
+
         return (loss, out) if return_outputs else loss
 
 

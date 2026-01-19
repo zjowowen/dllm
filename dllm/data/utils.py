@@ -1,4 +1,6 @@
+import random
 import re
+import time
 
 from datasets import (
     Dataset,
@@ -9,9 +11,67 @@ from datasets import (
     load_from_disk,
 )
 
+import requests
+
 from dllm.utils.utils import get_default_logger, parse_spec, resolve_with_base_env
 
 logger = get_default_logger(__name__)
+
+
+def _is_transient_hf_error(e: Exception) -> bool:
+    # Requests / hub transient errors (timeouts, connection resets, proxy hiccups).
+    if isinstance(e, requests.exceptions.RequestException):
+        return True
+    msg = str(e).lower()
+    # Some hub/network failures are wrapped by `datasets` into FileNotFoundError with a
+    # generic "cannot find in local cache" message (after a timeout). Treat as transient.
+    if isinstance(e, FileNotFoundError):
+        if "error happened while trying to locate the file on the hub" in msg:
+            return True
+        if "cannot find the requested files in the local cache" in msg:
+            return True
+        if "please check your connection" in msg and "hub" in msg:
+            return True
+    keywords = [
+        "read timed out",
+        "connection aborted",
+        "connection error",
+        "connection reset",
+        "timed out",
+        "temporarily unavailable",
+        "503",
+        "504",
+    ]
+    return any(k in msg for k in keywords)
+
+
+def _load_dataset_with_retry(*args, retries: int = 8, base_sleep_s: float = 2.0, max_sleep_s: float = 60.0, **kwargs):
+    """
+    Wrapper around 🤗 `load_dataset` with retry + exponential backoff + jitter.
+
+    This is important for large-scale distributed launches where multiple ranks may
+    hit the hub at the same time and experience intermittent timeouts.
+    """
+    last: Exception | None = None
+    for attempt in range(1, int(retries) + 1):
+        try:
+            return load_dataset(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001 (we intentionally filter by transient-ness)
+            if not _is_transient_hf_error(e):
+                raise
+            last = e
+            if attempt >= int(retries):
+                break
+            # exponential backoff with jitter to avoid thundering herd
+            sleep = min(float(max_sleep_s), float(base_sleep_s) * (2.0 ** float(attempt - 1)))
+            sleep = sleep * (0.5 + random.random())  # [0.5, 1.5)
+            logger.warning(
+                f"load_dataset transient error (attempt {attempt}/{retries}): {type(e).__name__}: {e}. "
+                f"Retrying in {sleep:.1f}s..."
+            )
+            time.sleep(sleep)
+    assert last is not None
+    raise last
 
 
 def load_sft_dataset(
@@ -44,11 +104,11 @@ def load_sft_dataset(
         elif _match(dataset_name_or_path, "tatsu-lab/alpaca"):
             ds = load_dataset_alpaca(dataset_name_or_path)
         elif _match(dataset_name_or_path, "allenai/tulu-3-sft-mixture"):
-            ds = load_dataset(dataset_name_or_path)
+            ds = _load_dataset_with_retry(dataset_name_or_path)
             ds = ds["train"].train_test_split(test_size=0.05, seed=42)
         elif _match(dataset_name_or_path, "HuggingFaceTB/smoltalk"):
             name = kvs.pop("name", "all")
-            ds = load_dataset(dataset_name_or_path, name=name)
+            ds = _load_dataset_with_retry(dataset_name_or_path, name=name)
         elif _match(dataset_name_or_path, "OpenCoder-LLM/opc-sft-stage1") or _match(
             dataset_name_or_path, "OpenCoder-LLM/opc-sft-stage2"
         ):
@@ -56,10 +116,10 @@ def load_sft_dataset(
             lang = kvs.pop("lang", None)
             ds = load_dataset_opc_sft(dataset_name_or_path, name=name, lang=lang)
         elif _match(dataset_name_or_path, "HuggingFaceH4/ultrachat_200k"):
-            ds = load_dataset(dataset_name_or_path)
+            ds = _load_dataset_with_retry(dataset_name_or_path)
             ds = DatasetDict({"train": ds["train_sft"], "test": ds["test_sft"]})
         else:
-            ds = load_dataset(dataset_name_or_path)
+            ds = _load_dataset_with_retry(dataset_name_or_path)
 
         # Normalize to DatasetDict and apply per-split limits
         ds = _ensure_datasetdict(ds)
@@ -117,7 +177,9 @@ def load_pt_dataset(
                 dataset_name_or_path, name=name, lang=lang, streaming=streaming
             )
         else:
-            base = load_dataset(dataset_name_or_path, name=name, streaming=streaming)
+            base = _load_dataset_with_retry(
+                dataset_name_or_path, name=name, streaming=streaming
+            )
 
         return base, kvs, dataset_name_or_path
 

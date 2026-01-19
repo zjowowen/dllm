@@ -19,6 +19,8 @@ from dllm.pipelines.oneflow.sampler import OneFlowSampler, OneFlowSamplerConfig,
 class ScriptArguments:
     model_dir: str = "models/oneflow/checkpoint-final"
     seed: int = 42
+    device: str = "auto"  # auto|cpu|cuda|npu
+    skip_special_tokens: bool = True
 
 
 @dataclass
@@ -39,7 +41,26 @@ def main():
     tokenizer = transformers.AutoTokenizer.from_pretrained(script_args.model_dir)
     model = OneFlowModel.from_pretrained(script_args.model_dir, map_location="cpu").eval()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def _npu_available() -> bool:
+        return bool(
+            hasattr(torch, "npu")
+            and hasattr(torch.npu, "is_available")
+            and torch.npu.is_available()
+        )
+
+    dev = str(getattr(script_args, "device", "auto") or "auto").lower()
+    if dev == "auto":
+        if _npu_available():
+            device = torch.device("npu")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+    elif dev in ("npu", "cuda", "cpu"):
+        device = torch.device(dev)
+    else:
+        raise ValueError(f"Unknown --device: {script_args.device} (expected auto|cpu|cuda|npu)")
+
     model = model.to(device)
 
     sampler = OneFlowSampler(model=model, tokenizer=tokenizer)
@@ -58,7 +79,10 @@ def main():
         out = sampler.sample([prompt_ids], sampler_args, return_dict=True)
         assert isinstance(out, OneFlowSamplerOutput)
 
-        text = tokenizer.decode(out.sequences[0].tolist(), skip_special_tokens=False)
+        text = tokenizer.decode(
+            out.sequences[0].tolist(),
+            skip_special_tokens=bool(getattr(script_args, "skip_special_tokens", True)),
+        )
         print("\nAssistant>\n" + text + "\n")
 
         if out.images:

@@ -17,6 +17,8 @@ dependencies = [
     "deepspeed==0.18.0",
     "peft==0.17.1",
     "datasets==4.2.0",
+    # Needed for streaming datasets stored as .zst (e.g., dclm-baseline-1.0)
+    "zstandard",
     "sentencepiece==0.2.0",
     "torchmetrics",
     "tyro",

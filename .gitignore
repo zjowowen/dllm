@@ -137,3 +137,7 @@ dmypy.json
 /wandb/
 /logs/
 /models*/
+
+# Local debug / scratch (not part of source control)
+/debug/
+fusion_result.json

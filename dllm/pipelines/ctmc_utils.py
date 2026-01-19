@@ -59,7 +59,11 @@ def bernoulli_from_rate(rate: torch.Tensor, tau: float) -> torch.Tensor:
     return torch.bernoulli(p)
 
 
-def sample_from_logits(logits_row: torch.Tensor, temperature: float) -> int:
+def sample_from_logits(
+    logits_row: torch.Tensor,
+    temperature: float,
+    suppress_token_ids: list[int] | None = None,
+) -> int:
     """
     Sample a token id from a 1D logits tensor.
 
@@ -67,10 +71,21 @@ def sample_from_logits(logits_row: torch.Tensor, temperature: float) -> int:
     - Else samples from a categorical distribution with scaled logits.
     """
 
+    if suppress_token_ids:
+        # Avoid mutating the caller's tensor.
+        logits = logits_row.clone()
+        n = int(logits.numel())
+        for tid in suppress_token_ids:
+            t = int(tid)
+            if 0 <= t < n:
+                logits[t] = float("-inf")
+    else:
+        logits = logits_row
+
     if temperature <= 0.0:
-        return int(torch.argmax(logits_row).item())
+        return int(torch.argmax(logits).item())
     return int(
-        torch.distributions.Categorical(logits=(logits_row / float(temperature)))
+        torch.distributions.Categorical(logits=(logits / float(temperature)))
         .sample()
         .item()
     )

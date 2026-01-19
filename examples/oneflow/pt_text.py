@@ -53,6 +53,10 @@ class TrainingArguments(OneFlowTrainer.OneFlowConfig):
     learning_rate: float = 1e-4
     per_device_train_batch_size: int = 8
     per_device_eval_batch_size: int = 8
+    # Text-only PT default: we usually don't have a test split (and OneFlow is label-free),
+    # so disable eval by default to avoid HF Trainer init errors.
+    eval_strategy: str = "no"
+    do_eval: bool = False
     scheduler_cls: str = field(
         default="LinearKappaScheduler",
         metadata={
@@ -62,9 +66,29 @@ class TrainingArguments(OneFlowTrainer.OneFlowConfig):
             )
         },
     )
+    # ---- perf profiling helpers (off by default) ---------------------------------
+    profile_timing: bool = False
+    profile_timing_sync: bool = False
+    profile_log_optimizer_time: bool = False
+
+    # Torch profiler trace (rank0 only). Writes to `${output_dir}/profile/`.
+    profile_trace: bool = False
+    profile_trace_warmup: int = 2
+    profile_trace_steps: int = 10
 
 
 def build_tokenizer(tokenizer_name_or_path: str) -> transformers.PreTrainedTokenizer:
+    # Helpful guard: if user passes an absolute/relative filesystem path, ensure it exists.
+    # (Repo IDs like "org/name" are allowed and may contain "/".)
+    p = os.path.expanduser(str(tokenizer_name_or_path))
+    is_path_like = os.path.isabs(p) or p.startswith(".") or p.startswith("~") or os.path.exists(p)
+    if is_path_like and (not os.path.exists(p)):
+        raise ValueError(
+            f"tokenizer_name_or_path looks like a local path but does not exist: {p}\n"
+            "If you intended to use an offline bundle, make sure you set the shell variable first, e.g.:\n"
+            "  BUNDLE=/abs/path/to/bundle\n"
+            "  ... --tokenizer_name_or_path \"$BUNDLE/tokenizer\" --dataset_args \"$BUNDLE/dataset\""
+        )
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         tokenizer_name_or_path, padding_side="right"
     )
@@ -102,6 +126,19 @@ def train():
 
     # ----- Dataset (PT-style) ------------------------------------------------------
     with accelerate.PartialState().local_main_process_first():
+        # Helpful guard for offline/preprocessed path.
+        if bool(data_args.load_preprocessed_data):
+            dp = os.path.expanduser(str(data_args.dataset_args))
+            if (os.path.isabs(dp) or dp.startswith(".") or dp.startswith("~") or os.path.exists(dp)) and (
+                not os.path.exists(dp)
+            ):
+                raise ValueError(
+                    f"load_preprocessed_data=True but dataset_args path does not exist: {dp}\n"
+                    "Expected a directory produced by `datasets.save_to_disk(...)`.\n"
+                    "If you intended to use an offline bundle, make sure you set the shell variable first, e.g.:\n"
+                    "  BUNDLE=/abs/path/to/bundle\n"
+                    "  ... --dataset_args \"$BUNDLE/dataset\""
+                )
         dataset = dllm.data.load_pt_dataset(
             data_args.dataset_args,
             streaming=data_args.streaming,
@@ -144,11 +181,16 @@ def train():
                 row["input_ids"] = [bos_id] + ids
             return row
 
-        dataset = dataset.map(
-            add_bos,
-            num_proc=0 if data_args.streaming else data_args.num_proc,
-            desc="Prepending BOS",
-        )
+        # NOTE: For streaming datasets (IterableDataset/IterableDatasetDict),
+        # `datasets` does NOT support multiprocessing `num_proc` in `.map(...)`.
+        if data_args.streaming:
+            dataset = dataset.map(add_bos)
+        else:
+            dataset = dataset.map(
+                add_bos,
+                num_proc=data_args.num_proc,
+                desc="Prepending BOS",
+            )
 
         if data_args.streaming:
             dataset = dataset.shuffle(seed=training_args.seed)
@@ -171,15 +213,82 @@ def train():
     # ----- Training ---------------------------------------------------------------
     accelerate.PartialState().wait_for_everyone()
     logger.info("Start OneFlow text-only training...")
+
+    # If user enables eval_strategy but no eval split exists, disable evaluation to avoid
+    # HF Trainer's hard error on init.
+    eval_ds = dataset.get("test", None)
+    if eval_ds is None:
+        try:
+            es = str(getattr(training_args, "eval_strategy", "no") or "no")
+        except Exception:
+            es = "no"
+        if es.lower() != "no":
+            logger.warning(
+                f"No eval_dataset found in loaded dataset (splits={list(dataset.keys())}); "
+                "forcing eval_strategy='no' for safety."
+            )
+            training_args.eval_strategy = "no"
+            training_args.do_eval = False
+
     trainer = OneFlowTrainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset["train"],
-        eval_dataset=dataset.get("test", None),
+        eval_dataset=eval_ds,
         args=training_args,
         data_collator=OneFlowCollator(tokenizer=tokenizer),
         scheduler=dllm.core.schedulers.make_kappa_scheduler(training_args.scheduler_cls),
     )
+
+    # Optional torch profiler trace (rank0 only).
+    if bool(getattr(training_args, "profile_trace", False)) and accelerate.PartialState().is_main_process:
+        try:
+            from torch.profiler import ProfilerActivity, profile, schedule, tensorboard_trace_handler
+
+            acts = [ProfilerActivity.CPU]
+            if hasattr(ProfilerActivity, "NPU"):
+                acts.append(getattr(ProfilerActivity, "NPU"))
+            elif hasattr(ProfilerActivity, "CUDA"):
+                acts.append(ProfilerActivity.CUDA)
+
+            prof_dir = os.path.join(training_args.output_dir, "profile")
+            os.makedirs(prof_dir, exist_ok=True)
+
+            wait = 0
+            warmup = max(0, int(getattr(training_args, "profile_trace_warmup", 2)))
+            active = max(1, int(getattr(training_args, "profile_trace_steps", 10)))
+            prof = profile(
+                activities=acts,
+                schedule=schedule(wait=wait, warmup=warmup, active=active, repeat=1),
+                on_trace_ready=tensorboard_trace_handler(prof_dir),
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=False,
+            )
+
+            from transformers import TrainerCallback
+
+            class _ProfilerCallback(TrainerCallback):
+                def __init__(self, p):
+                    self.p = p
+
+                def on_train_begin(self, args, state, control, **kwargs):
+                    self.p.__enter__()
+
+                def on_step_end(self, args, state, control, **kwargs):
+                    self.p.step()
+
+                def on_train_end(self, args, state, control, **kwargs):
+                    try:
+                        self.p.__exit__(None, None, None)
+                    except Exception:
+                        pass
+
+            trainer.add_callback(_ProfilerCallback(prof))
+            logger.info(f"[profile_trace] enabled (rank0). traces -> {prof_dir}")
+        except Exception as e:
+            logger.warning(f"[profile_trace] failed to enable torch profiler: {e}")
+
     trainer.train()
 
     # Save
