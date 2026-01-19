@@ -28,7 +28,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+# Ascend env scripts may reference unset vars (e.g. ZSH_VERSION) and will fail under `set -u`.
+# Temporarily disable nounset for environment activation.
+set +u
 source activate_python_env.sh
+set -u
 
 DATASET_NAME_OR_PATH="Trelis/tiny-shakespeare"
 DATASET_CONFIG_NAME=""
