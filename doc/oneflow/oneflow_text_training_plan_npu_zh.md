@@ -151,6 +151,8 @@ python -u examples/oneflow/sample.py \
 
 本仓库提供了单机 16 卡配置：
 - `scripts/accelerate_configs/npu_ddp.yaml`
+以及 4 节点（4×16=64 卡）模板配置：
+- `scripts/accelerate_configs/npu_ddp_4node.yaml`
 
 多机时的关键是：
 - 同一份代码与同一份离线数据在每台机器都可见（共享存储或复制到本地）
@@ -159,6 +161,44 @@ python -u examples/oneflow/sample.py \
 建议你们集群先做 **2 节点 bring-up**：
 - 目标：稳定跑 200–500 steps，不 hang、不 OOM、loss 正常下降
 - 然后再扩到更多节点
+
+### 4.1 4 节点（64 卡）启动模板（无 Slurm 场景）
+
+在 **每个节点** 都执行同一条命令，只是 `--machine_rank` 不同：
+
+```bash
+cd /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm
+source activate_python_env.sh
+export TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_HUB_OFFLINE=1
+
+# 由你们环境提供/约定：
+export MASTER_ADDR="<rank0 的 IP 或 hostname>"
+export MASTER_PORT=29500
+export NODE_RANK="<0..3>"
+
+accelerate launch \
+  --config_file scripts/accelerate_configs/npu_ddp_4node.yaml \
+  --machine_rank "$NODE_RANK" \
+  --main_process_ip "$MASTER_ADDR" \
+  --main_process_port "$MASTER_PORT" \
+  examples/oneflow/pt_text.py \
+  --output_dir "/path/to/ckpts/oneflow_text_pt_4n" \
+  --tokenizer_name_or_path "/path/to/offline_bundle/tokenizer" \
+  --dataset_args "/path/to/offline_bundle/dataset" \
+  --load_preprocessed_data True \
+  --streaming False \
+  --max_length 1024 \
+  --max_steps 200000 \
+  --per_device_train_batch_size 16 \
+  --gradient_accumulation_steps 1 \
+  --learning_rate 1e-4 --warmup_ratio 0.01 \
+  --eval_strategy no --do_eval False \
+  --save_strategy steps --save_steps 2000 --save_total_limit 5 \
+  --logging_steps 20 \
+  --report_to none
+```
+
+> 建议：先把 `--max_steps` 改成 200 做 bring-up，确认 4 节点 HCCL 没问题再放大。
 
 ---
 

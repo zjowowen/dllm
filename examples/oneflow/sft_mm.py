@@ -21,6 +21,8 @@ logger = dllm.utils.get_default_logger(__name__)
 @dataclass
 class ModelArguments:
     tokenizer_name_or_path: str = "gpt2"
+    # Optional: initialize from an existing OneFlow checkpoint (text-only PT).
+    init_model_dir: str | None = None
     dim: int = 512
     depth: int = 8
     dim_head: int = 64
@@ -63,25 +65,63 @@ def build_tokenizer(tokenizer_name_or_path: str) -> transformers.PreTrainedToken
 
 
 def sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True) -> dict:
-    prompt_response_tokens = tokenizer.apply_chat_template(
-        row["messages"],
-        tokenize=True,
-        add_generation_prompt=False,
-    )
-    if mask_prompt_loss:
-        prompt_tokens = tokenizer.apply_chat_template(
-            row["messages"][:-1],
+    """
+    Map a chat-style sample (messages) into OneFlow SFT training fields.
+
+    We prefer `tokenizer.apply_chat_template` when available (chat tokenizers),
+    but also support plain tokenizers (e.g., GPT-2) by formatting as:
+      prompt_text + "\n\n" + response_text
+    """
+    messages = row["messages"]
+
+    def _ensure_bos(ids: list[int]) -> list[int]:
+        bos = tokenizer.bos_token_id
+        if bos is None:
+            return ids
+        if not ids:
+            return [int(bos)]
+        if int(ids[0]) != int(bos):
+            return [int(bos)] + [int(x) for x in ids]
+        return [int(x) for x in ids]
+
+    # --- Path A: chat template tokenization (preferred) ---
+    use_chat_template = bool(getattr(tokenizer, "chat_template", None))
+    if use_chat_template and hasattr(tokenizer, "apply_chat_template"):
+        prompt_response_tokens = tokenizer.apply_chat_template(
+            messages,
             tokenize=True,
-            add_generation_prompt=True,
+            add_generation_prompt=False,
         )
-        return {
-            "input_ids": prompt_response_tokens,
-            "prompt_len": len(prompt_tokens),
-        }
-    else:
-        if prompt_response_tokens and prompt_response_tokens[0] != tokenizer.bos_token_id:
-            prompt_response_tokens = [tokenizer.bos_token_id] + prompt_response_tokens
+        prompt_response_tokens = _ensure_bos(prompt_response_tokens)
+        if mask_prompt_loss:
+            prompt_tokens = tokenizer.apply_chat_template(
+                messages[:-1],
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+            prompt_tokens = _ensure_bos(prompt_tokens)
+            return {"input_ids": prompt_response_tokens, "prompt_len": len(prompt_tokens)}
         return {"input_ids": prompt_response_tokens}
+
+    # --- Path B: plain-text formatting (works with GPT-like tokenizers) ---
+    # Expect last message is assistant response.
+    if not messages or len(messages) < 2:
+        raise ValueError("Expected at least 2 messages (user + assistant).")
+    prompt_text = str(messages[0].get("content", "") or "").strip()
+    resp_text = str(messages[-1].get("content", "") or "").strip()
+
+    # Simple delimiter. Keep it consistent for prompt_len computation.
+    prompt_with_delim = prompt_text + "\n\n"
+    full_text = prompt_with_delim + resp_text
+
+    full_ids = tokenizer.encode(full_text, add_special_tokens=False)
+    full_ids = _ensure_bos(full_ids)
+
+    if mask_prompt_loss:
+        prompt_ids = tokenizer.encode(prompt_with_delim, add_special_tokens=False)
+        prompt_ids = _ensure_bos(prompt_ids)
+        return {"input_ids": full_ids, "prompt_len": len(prompt_ids)}
+    return {"input_ids": full_ids}
 
 
 def train():
@@ -125,7 +165,13 @@ def train():
         heads=model_args.heads,
         dim_latent=model_args.dim_latent,
     )
-    model = OneFlowModel(cfg)
+    if model_args.init_model_dir:
+        logger.info(f"Loading OneFlowModel from: {model_args.init_model_dir}")
+        model = OneFlowModel.from_pretrained(model_args.init_model_dir)
+        # Keep vocab in sync with tokenizer (in case special tokens were added).
+        model.resize_token_embeddings(len(tokenizer))
+    else:
+        model = OneFlowModel(cfg)
 
     accelerate.PartialState().wait_for_everyone()
     logger.info("Start OneFlow SFT (text-only baseline; extend with images as needed)...")

@@ -1,0 +1,13 @@
+compute_environment: LOCAL_MACHINE
+distributed_type: MULTI_NPU
+downcast_bf16: "no"
+
+# 4 nodes × 16 NPUs = 64 ranks total.
+num_machines: 4
+num_processes: 64
+
+# NOTE:
+# - Use the same config on all nodes.
+# - Override `--machine_rank {0..3}` per node.
+machine_rank: 0
+
