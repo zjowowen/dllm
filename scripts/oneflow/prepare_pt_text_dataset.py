@@ -16,7 +16,10 @@ Example:
 """
 
 import functools
+import logging
 import os
+import random
+import time
 from dataclasses import dataclass
 
 # Avoid failing on non-Ascend machines that have torch_npu installed but do not have
@@ -65,6 +68,58 @@ class Args:
     output_dir: str = "/tmp/oneflow_pt_text"
     num_proc: int = 8
 
+    # Streaming retry policy (only applies when --streaming True).
+    # We intentionally "retry from scratch" because robust continuation on IterableDataset
+    # is hard to guarantee (may cause duplicates/missing rows).
+    streaming_max_retries: int = 8
+    streaming_retry_backoff_base_s: float = 2.0
+    streaming_retry_backoff_max_s: float = 60.0
+    streaming_retry_jitter_ratio: float = 0.2
+
+    # Write a persistent log for postmortem debugging.
+    # If empty, defaults to <output_dir>/prepare_pt_text_dataset.log
+    log_file: str | None = None
+
+
+def _setup_file_logging(*, logger: logging.Logger, log_path: str) -> None:
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    # Avoid adding duplicate file handlers if main() is called multiple times.
+    for h in list(logger.handlers):
+        if isinstance(h, logging.FileHandler) and os.path.abspath(h.baseFilename) == os.path.abspath(log_path):
+            return
+    fh = logging.FileHandler(log_path)
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(
+        logging.Formatter(
+            fmt="%(asctime)s %(levelname)s %(name)s:%(lineno)d - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    logger.addHandler(fh)
+
+
+def _is_transient_streaming_error(e: BaseException) -> bool:
+    # We keep this simple and string-based to avoid tight coupling to optional deps.
+    msg = str(e).lower()
+    transient_markers = (
+        "incompleteread",
+        "chunkedencodingerror",
+        "connection broken",
+        "protocolerror",
+        "read timed out",
+        "readtimeout",
+        "connection reset",
+        "connection aborted",
+        "remote end closed connection",
+        "temporary failure",
+        "timed out",
+        "502",
+        "503",
+        "504",
+        "429",
+    )
+    return any(m in msg for m in transient_markers)
+
 
 def build_tokenizer(name_or_path: str) -> transformers.PreTrainedTokenizer:
     tok = transformers.AutoTokenizer.from_pretrained(name_or_path, padding_side="right")
@@ -85,6 +140,13 @@ def main():
     (args,) = parser.parse_args_into_dataclasses()
 
     os.makedirs(args.output_dir, exist_ok=True)
+    log_path = (
+        str(args.log_file).strip()
+        if args.log_file is not None and str(args.log_file).strip()
+        else os.path.join(args.output_dir, "prepare_pt_text_dataset.log")
+    )
+    _setup_file_logging(logger=logger, log_path=log_path)
+    logger.info(f"Log file: {log_path}")
     logger.info(f"Building tokenizer: {args.tokenizer_name_or_path}")
     tok = build_tokenizer(args.tokenizer_name_or_path)
 
@@ -182,15 +244,61 @@ def main():
     if bool(args.streaming):
         # Streaming path: make train_limit/test_limit actually limit network IO.
         ds_out = DatasetDict()
-        ds_out["train"] = build_pt_split_from_streaming(
+
+        def build_split_with_retries(split_name: str, split_iter, *, limit: int | None):
+            max_retries = max(0, int(args.streaming_max_retries))
+            base = float(args.streaming_retry_backoff_base_s)
+            backoff_max = float(args.streaming_retry_backoff_max_s)
+            jitter = float(args.streaming_retry_jitter_ratio)
+
+            attempt = 0
+            while True:
+                try:
+                    logger.info(
+                        f"[streaming] Build split='{split_name}' attempt={attempt + 1}/{max_retries + 1} "
+                        f"(limit={limit})"
+                    )
+                    return build_pt_split_from_streaming(
+                        split_iter,
+                        text_field=args.text_field,
+                        limit=limit,
+                    )
+                except Exception as e:
+                    # Non-transient errors should fail fast (schema error, zstd missing, etc).
+                    if not _is_transient_streaming_error(e):
+                        logger.exception(
+                            f"[streaming] Non-transient error while building split='{split_name}'. "
+                            f"Not retrying."
+                        )
+                        raise
+
+                    if attempt >= max_retries:
+                        logger.exception(
+                            f"[streaming] Transient error while building split='{split_name}', "
+                            f"retries exhausted (attempts={max_retries + 1})."
+                        )
+                        raise
+
+                    # Exponential backoff with jitter.
+                    wait = min(backoff_max, base * (2**attempt))
+                    wait = wait * (1.0 + random.uniform(-jitter, jitter))
+                    wait = max(0.0, float(wait))
+                    logger.exception(
+                        f"[streaming] Transient error while building split='{split_name}' "
+                        f"(attempt={attempt + 1}/{max_retries + 1}). Retrying from scratch in {wait:.1f}s..."
+                    )
+                    time.sleep(wait)
+                    attempt += 1
+
+        ds_out["train"] = build_split_with_retries(
+            "train",
             raw[args.train_split],
-            text_field=args.text_field,
             limit=args.train_limit,
         )
         if args.test_split and args.test_split in raw:
-            ds_out["test"] = build_pt_split_from_streaming(
+            ds_out["test"] = build_split_with_retries(
+                "test",
                 raw[args.test_split],
-                text_field=args.text_field,
                 limit=args.test_limit,
             )
         out = ds_out
