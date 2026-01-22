@@ -28,6 +28,7 @@ os.environ.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
 
 import transformers
 from datasets import Dataset, DatasetDict
+from tqdm.auto import tqdm
 
 from dllm.data.utils import _load_dataset_with_retry
 
@@ -79,6 +80,12 @@ class Args:
     # Write a persistent log for postmortem debugging.
     # If empty, defaults to <output_dir>/prepare_pt_text_dataset.log
     log_file: str | None = None
+
+    # Show a progress bar during streaming export.
+    # Note: Streaming download is performed internally by HF datasets/hub; we show
+    # an approximate throughput based on *raw text bytes processed*.
+    progress: bool = True
+    progress_refresh_s: float = 1.0
 
 
 def _setup_file_logging(*, logger: logging.Logger, log_path: str) -> None:
@@ -182,10 +189,28 @@ def main():
         buf_pos = 0
         seqs: list[list[int]] = []
 
+        # Progress: rows + approximate raw-bytes throughput (proxy for download speed).
+        total_rows = int(limit) if limit is not None else None
+        pbar = tqdm(
+            total=total_rows,
+            unit="rows",
+            dynamic_ncols=True,
+            disable=not bool(args.progress),
+            desc="Streaming export",
+        )
+        bytes_text_total = 0
+        t_start = time.perf_counter()
+        t_last = t_start
+
         def flush_text_batch(texts: list[str]) -> None:
             nonlocal buf, buf_pos
             if not texts:
                 return
+            nonlocal bytes_text_total, t_last
+
+            # Approximate input bytes (UTF-8) processed; used for a rough kB/s metric.
+            # This is NOT exact network bytes, but correlates with streaming IO + tokenizer load.
+            bytes_text_total += sum(len(t.encode("utf-8", errors="ignore")) for t in texts)
             out_tok = tok(texts, add_special_tokens=False)
             for ids in out_tok["input_ids"]:
                 if bool(args.insert_eos) and eos_id is not None:
@@ -201,6 +226,22 @@ def main():
                 if buf_pos > 1_000_000:
                     buf = buf[buf_pos:]
                     buf_pos = 0
+
+            if not pbar.disable:
+                pbar.update(len(texts))
+                now = time.perf_counter()
+                refresh_s = max(0.1, float(args.progress_refresh_s))
+                if (now - t_last) >= refresh_s:
+                    dt = max(1e-6, now - t_start)
+                    rows_done = n_rows
+                    rows_per_s = rows_done / dt
+                    kb_per_s = (bytes_text_total / 1024.0) / dt
+                    pbar.set_postfix(
+                        rows_per_s=f"{rows_per_s:.1f}",
+                        kb_per_s=f"{kb_per_s:.1f}",
+                        seqs=len(seqs),
+                    )
+                    t_last = now
 
         batch: list[str] = []
         n_rows = 0
@@ -230,6 +271,19 @@ def main():
 
         if batch:
             flush_text_batch(batch)
+
+        if not pbar.disable:
+            # Final refresh + close
+            now = time.perf_counter()
+            dt = max(1e-6, now - t_start)
+            rows_per_s = n_rows / dt
+            kb_per_s = (bytes_text_total / 1024.0) / dt
+            pbar.set_postfix(
+                rows_per_s=f"{rows_per_s:.1f}",
+                kb_per_s=f"{kb_per_s:.1f}",
+                seqs=len(seqs),
+            )
+            pbar.close()
 
         if not bool(args.drop_tail):
             rem = buf[buf_pos:]
