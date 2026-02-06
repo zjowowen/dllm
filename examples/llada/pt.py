@@ -83,9 +83,6 @@ def train():
         (ModelArguments, DataArguments, TrainingArguments)
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    # necessary for streaming dataset
-    if data_args.streaming:
-        training_args.accelerator_config.dispatch_batches = False
     dllm.utils.print_args_main(model_args, data_args, training_args)
     dllm.utils.initial_training_setup(model_args, data_args, training_args)
 

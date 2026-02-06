@@ -130,26 +130,47 @@ class PrependBOSWrapper(CollatorWrapper):
 @dataclass
 class RandomTruncateWrapper(CollatorWrapper):
     """
-    Collator wrapper that randomly truncates sequences during training.
+    Collator wrapper that randomly truncates sequences *logically* during training
+    by masking out suffix tokens instead of changing tensor shapes.
 
-    With probability random_length_ratio, truncates all sequences in the batch
-    to a random length. Also removes attention_mask if it's all ones (no padding).
+    - input_ids: unchanged
+    - attention_mask[:, L:] = 0
+    - labels[:, L:] = -100
 
-    Attributes:
-        random_length_ratio: Probability of applying random truncation (default: 0.01).
+    This keeps batch shapes consistent across processes and is safe for
+    Accelerate + IterableDataset + dispatch_batches.
     """
 
     random_length_ratio: float = 0.01
+    label_pad_token_id: int = -100
 
     def after(self, outputs):
         if torch.rand(1) < self.random_length_ratio:
-            random_length = torch.randint(1, outputs["input_ids"].shape[1] + 1, (1,))
-            for key in ["input_ids", "labels", "attention_mask"]:
-                if key in outputs:
-                    outputs[key] = outputs[key][:, :random_length]
-        # Check if attention_mask is all ones and set it to None
-        if "attention_mask" in outputs and torch.all(outputs["attention_mask"] == 1):
-            outputs.pop("attention_mask")
+            input_ids = outputs["input_ids"]
+            bsz, seq_len = input_ids.shape
+
+            # sample truncation length
+            random_length = torch.randint(
+                1, seq_len + 1, (1,), device=input_ids.device
+            ).item()
+
+            # attention_mask: zero out suffix
+            if "attention_mask" in outputs:
+                outputs["attention_mask"][:, random_length:] = 0
+            else:
+                # create attention_mask if missing
+                attention_mask = torch.ones(
+                    (bsz, seq_len),
+                    dtype=torch.long,
+                    device=input_ids.device,
+                )
+                attention_mask[:, random_length:] = 0
+                outputs["attention_mask"] = attention_mask
+
+            # labels: ignore suffix
+            if "labels" in outputs:
+                outputs["labels"][:, random_length:] = self.label_pad_token_id
+
         return outputs
 
 
