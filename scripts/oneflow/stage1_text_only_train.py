@@ -2,7 +2,7 @@
 Stage 1 (text-only) smoke training script.
 
 This script is meant to validate the "## Stage 1：纯文本（text-only）正确性" section in:
-  doc/oneflow/oneflow_zero_validation_zh.md
+  doc/oneflow/validation/oneflow_zero_validation_zh.md
 
 It exercises (text-only; no image/latent dependency):
   - τ_text sampling -> t_text clipping

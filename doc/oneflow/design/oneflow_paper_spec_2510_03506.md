@@ -86,4 +86,3 @@ Appendix E 的 Algorithm 2 也明确：\(\pi\) gate 是可选项（若不用 \(\
 
 论文在 B.6 讨论 \(\\kappa_t=t^k\) 的 k-scheduler（线性/二次/三次），并报告：**线性（k=1）最好**，更高次会导致过激的 token deletion。
 
-

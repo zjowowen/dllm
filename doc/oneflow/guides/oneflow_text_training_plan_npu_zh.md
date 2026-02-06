@@ -5,6 +5,10 @@
 > - 再把模型能力推进到更实用：**更像正常英文**、能完成简单事实补全（如 Paris）、具备基本代码续写能力
 > - 全程支持 **离线数据** 与 **多节点多卡** 训练
 
+相关文档：
+- 归零式验证（Stage 1 文本侧）：`doc/oneflow/validation/oneflow_zero_validation_zh.md`
+- 论文规格（Eq. 7 文本 loss）：`doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
+
 ---
 
 ## 0. 先澄清：为什么现在采样看起来“不像 GPT”

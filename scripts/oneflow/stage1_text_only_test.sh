@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Stage 1 (text-only) test wrapper.
 #
-# This aligns with doc/oneflow/oneflow_zero_validation_zh.md Stage 1 and runs:
+# This aligns with doc/oneflow/validation/oneflow_zero_validation_zh.md Stage 1 and runs:
 # - Eq(7) loss unit tests
 # - sampler-step probability + insertion semantics tests
 # - X_t + bag-of-tokens construction tests (subset of sequence_ops)

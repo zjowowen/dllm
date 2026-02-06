@@ -3,7 +3,10 @@
 本文档整理了从 **HuggingFace 元数据 → `img2dataset` 下载 → VAE 预计算 latents → 本地 16×Ascend NPU 训练** 的一整套流程，并包含本次 bring-up 中遇到的关键坑位与对应修复。
 
 如需排查“32 张小数据集仍无法过拟合/训练-采样不匹配/数据集 decode 是否正确”等问题，请看：
-- `doc/oneflow/oneflow_overfit_debug_zh.md`
+- `doc/oneflow/validation/oneflow_overfit_debug_zh.md`
+
+相关文档：
+- 归零式验证主线（含 Stage 0 数据/latent 约定）：`doc/oneflow/validation/oneflow_zero_validation_zh.md`
 
 > 适用场景：
 > - 本地无 Slurm（单机多卡）
@@ -266,5 +269,4 @@ accelerate launch \
 - 解决：
   - 先 `--dataloader_num_workers 0` 跑通
   - 再增加 shard 数（`--maxcount` 更小 / re-shard）
-
 

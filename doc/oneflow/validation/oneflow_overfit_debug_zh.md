@@ -9,6 +9,10 @@
 
 > 你的 overfit 判据（最强、也最容易暴露问题）：
 > **用训练集中的 caption 作为 prompt，生成的图像应尽量接近该样本的 GT 图像**（可用肉眼 + 简单指标如 latent MSE / pixel PSNR）。
+
+相关文档：
+- 数据准备与训练流程：`doc/oneflow/guides/oneflow_data_prep_and_train_npu_zh.md`
+- 归零式验证主线：`doc/oneflow/validation/oneflow_zero_validation_zh.md`
 ---
 
 ## 1. 两个核心脚本：训练与采样到底做了什么
@@ -95,7 +99,7 @@ Trainer 侧的 `compute_loss` 强依赖 `x1_ids` 和 `image_latents`：
 - **不会自动补 EOS**
 
 这通常不会“完全错误”，但如果你要做 **严格 overfit / reconstruction**，建议评估时直接用训练样本自带的 `json.input_ids`，这样训练-评估 token 序列完全一致。
-> 后续我们会提供一个 overfit eval 脚本：从 WDS 取一条训练样本 → 用其 `input_ids` 采样 → 与 GT 解码对比。
+> 已提供 overfit eval 脚本：`examples/oneflow/overfit_eval_wds.py`（从 WDS 取样 → 用 `input_ids` 采样 → 与 GT 解码对比）。
 
 ### 2.2 数据集 caption 过滤 ≠ 图像内容真的像花
 用 `caption_regex=\\bflower\\b` 抽 32 条样本，只保证 caption 里出现了 “flower” 单词：

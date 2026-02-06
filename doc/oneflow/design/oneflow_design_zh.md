@@ -1,4 +1,4 @@
-# OneFlow 多模态（Text Edit Flow + Image Flow Matching）设计与落地方案（中文）
+# OneFlow 多模态（Text Edit Flow + Image Flow Matching）设计与落地方案（中文详版）
 
 > 目标：把 OneFlow（插入式 Edit Flow 文本 + Flow Matching 图像 latent + 交错调度 κ）的算法完整加入本仓库，并与现有 `dllm/pipelines/editflow` 的工程结构保持一致。
 >
@@ -6,6 +6,11 @@
 > - OneFlow: Concurrent Mixed-Modal and Interleaved Generation with Edit Flows — [arXiv:2510.03506](https://arxiv.org/html/2510.03506)
 > - Transfusion: Predict the Next Token and Diffuse Images with One Multi-Modal Model — `https://arxiv.org/html/2408.11039`
 > - Edit Flows（前作，仅用于工程风格与 CTMC 损失对齐）：`https://arxiv.org/html/2506.09018`
+>
+> 相关文档：
+> - 论文规格摘录：`doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
+> - 代码对齐审计：`doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
+> - 英文精简版：`doc/oneflow/design/oneflow_design_en.md`
 
 ---
 
@@ -117,7 +122,7 @@ OneFlow 还需要 `κ^{-1}(u)`（论文 Eq. 28）。实现策略：
 （对应论文 Algorithm 3 第 5-14 行）
 
 给定 ground-truth token 序列 \(X\)：
-- 采样 `τ_text ~ Unif[0,2]`，设 `t_text = min(1, τ_text)`。
+- 采样 `τ_text`：通常 `Unif[0,1]`，也可按 `mixed_generation_prob` 以一定概率改为 `Unif[1,2]`；设 `t_text = min(1, τ_text)`。
 - 对每个 token 做 κ-keep：保留概率 `κ(t_text)`；BOS 强制保留。
 - 构造：
   - `X_t`: 保留 token 形成的子序列（保持顺序）
@@ -131,22 +136,17 @@ bag 的构造与论文一致（伪码）：
 
 直观理解：`A_j` 收集的是“第 j 个保留 token 之后缺失的 token”。如果 BOS 总是保留，那么 `A_1` 就对应 BOS 后的插入槽位。
 
-## 4.3 文本损失（insertion edit flow）
+## 4.3 文本损失（Eq. 7）
 
-在时间 `t_text`，记 `w = κ'(t_text)/(1-κ(t_text))`。模型在每个槽位 i 输出 `λ_i` 与 `Q_i`。
+OneFlow 采用论文 Eq. (7) 的组合 loss（与 Edit Flows 原始 CTMC 目标不同）：
+- **token CE**：对 bag-of-tokens 的每个 token 做交叉熵（Eq. 6）。
+- **π BCE**：用二分类判别 `k_i==0` / `k_i>0`（Eq. 5）。
+- **λ_nonzero Poisson**：仅对 `k_i>0` 位置训练计数强度（Eq. 4）。
 
-推荐实现为 CTMC NLL 的 MC estimator（与 `editflow` 的 survival + positive term 风格对齐）：
-- **Survival term**：
-  - \(L_{\text{surv}} = \mathbb{E}[ w \sum_i λ_i ]\)
-- **Positive term**：
-  - 对每个槽位 i 的 bag `A_i`，若其中有 k 个 token \(a_1..a_k\)，则
-  - \(L_{\text{pos}} = \mathbb{E}[ w \sum_i \sum_{a\in A_i} (-\log λ_i - \log Q_i(a)) ]\)
-- **π term（可选）**：若启用 π 门控，则可加一个辅助 BCE；或仅在采样时使用而不训练。
-
-实践细节：
-- `λ_i` 用 `softplus` 保证非负，并对数值稳定做 clamp。
-- `Q_i` 用 `log_softmax`，对目标 token 做 NLL。
-- 可按“原始长度/有效槽位数”归一化，使 batch 间尺度稳定。
+重要实现说明：
+- **不使用** \(\\dot\\kappa/(1-\\kappa)\) 对 loss 加权（论文明确说明经验上更好）。
+- 插入预测默认 **t-independent**（text 不显式条件于 time）。
+- 若要对照实验，可保留 legacy `ctmc` loss（带 \(w(t)=\\dot\\kappa/(1-\\kappa)\) 权重）。
 
 ## 4.4 图像侧 interleaved 时间与 flow matching
 
@@ -241,40 +241,16 @@ bag 的构造与论文一致（伪码）：
 ### 新增路径
 - `dllm/pipelines/oneflow/`
 - `examples/oneflow/`
-- `doc/oneflow/oneflow_design_zh_en.md`（本文件）
+- `doc/oneflow/design/oneflow_design_zh.md`（本文件）
+- `doc/oneflow/design/oneflow_design_en.md`（英文精简版）
 
 ### 与现有风格对齐
 - 训练脚本保持与 `examples/editflow/pt.py` / `sft.py` 相同结构：`HfArgumentParser` + `dllm.utils.initial_training_setup` + 自定义 trainer。
 - 推断脚本保持与 `examples/editflow/sample.py` / `chat.py` 相同结构：构建 sampler → `sample()` → 可视化/解码。
 
-### 与 editflow 的 utils 复用与共享模块
-
-为减少 `editflow` 与 `oneflow` 在 CTMC/采样工具函数上的重复实现，并避免 pipeline 间相互依赖造成的循环 import，本仓库把“通用 helper”抽到共享模块：
-
-- `dllm/pipelines/ctmc_utils.py`
-  - `pad_1d`: 训练侧把变长 token list pad 成 `[B,L]` 张量与 mask
-  - `sample_from_logits`: 从 logits 采样 token（支持 temperature）
-  - `bernoulli_from_rate`: 把 rate 与步长 τ 转为 Bernoulli 触发（带 clamp）
-  - `safe_log`: 数值稳定的 `log(x)`（带 clamp）
-
-迁移后的依赖关系：
-- `dllm/pipelines/editflow/{trainer.py,sampler.py}` 与 `dllm/pipelines/oneflow/{trainer.py,sampler.py}` 统一 import `ctmc_utils`。
-- 为保持兼容，`dllm/pipelines/editflow/utils.py` 继续对外暴露 `pad_1d`（通过 re-export），旧的 import 路径不会被破坏。
-
-### prompt_len 语义（SFT）
-
-当 batch 中提供 `prompt_len`（例如 SFT 场景 `prompt + response`）时，OneFlow v1 采用与 `EditFlow` 一致的语义：**prompt 前缀只作为条件输入，不在训练中被编辑**。
-
-- **训练（OneFlowTrainer）**：
-  - `prompt_len` 表示 `x1_ids` 的前缀长度（包含 BOS 时也应计入）。
-  - 在构造 `X_t` 时，trainer 会强制 keep `x1_ids[:prompt_len]`，从而避免 prompt 区域产生删除/插入事件。
-  - 约束：`0 < prompt_len <= len(x1_ids)`，否则报错。
-- **推断（OneFlowSampler）**：
-  - 默认 `edit_prompt=False`，只允许在 prompt 的最后一个 token 之后插入（保持前缀稳定）。
-- **多模态限制（v1）**：
-  - 若训练 batch 同时提供 `image_latents`，并且 `prompt_len` 覆盖了 `<|oneflow_image|>`，当前实现会显式报错。
-  - 原因：v1 尚未定义“prompt 内图像作为条件输入”的语义（避免把条件图像误当作待生成图像）。
-  - 后续若要支持条件图像，建议引入独立 token/字段区分「条件图像」与「待生成图像」。
+### 工程复用与 prompt_len 语义
+- 相关工程改造与复用说明请见：`doc/oneflow/engineering/oneflow_editflow_utils_reuse_plan_zh.md`。
+- 该文档覆盖 CTMC 通用 helper 抽取、兼容策略与 `prompt_len` 行为约束。
 
 ---
 
@@ -290,5 +266,4 @@ bag 的构造与论文一致（伪码）：
 - 能跑通 text-only toy：插入式生成可增长序列。
 - 能跑通 text+image toy：训练后能采样出至少一张图像 latent，并能（可选）通过 VAE 解码到像素图。
 - 代码结构清晰、可扩展（未来可替换 trunk、支持多图、多模态、多分辨率）。
-
 

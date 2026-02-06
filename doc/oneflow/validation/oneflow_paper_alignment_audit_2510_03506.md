@@ -1,7 +1,7 @@
 # OneFlow 代码对齐审计（arXiv:2510.03506）
 
 论文：[arXiv:2510.03506](https://arxiv.org/html/2510.03506)  
-论文规格摘录见：`doc/oneflow/oneflow_paper_spec_2510_03506.md`
+论文规格摘录见：`doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
 
 基线训练入口：`examples/oneflow/pt_wds_latents.py`
 
@@ -87,5 +87,4 @@
 - optimizer 类型/β/ε/weight decay
 - lr schedule 细节（cosine/linear 等）、warmup 配置
 - grad clip、EMA、precision（bf16/fp16）等工程细节
-
 

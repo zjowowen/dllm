@@ -4,7 +4,11 @@
 
 论文参考：[arXiv:2510.03506](https://arxiv.org/html/2510.03506)
 
-本仓库已落地的论文规格摘录：`doc/oneflow/oneflow_paper_spec_2510_03506.md`
+本仓库已落地的论文规格摘录：`doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
+
+相关文档：
+- 设计总览（算法与结构）：`doc/oneflow/design/oneflow_design_zh.md`
+- 代码对齐审计（Trainer/Sampler）：`doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
 
 ---
 
@@ -440,5 +444,4 @@ pytest -q scripts/tests/test_oneflow_*.py
 ```bash
 export TORCH_DEVICE_BACKEND_AUTOLOAD=0
 ```
-
 
