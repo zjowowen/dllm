@@ -99,21 +99,16 @@ def sample_tau_text(
     *,
     batch_size: int,
     device: torch.device,
-    mixed_generation_prob: float = 0.0,
 ) -> torch.Tensor:
     """
-    Sample τ_text ∈ [0,2] with an explicit “mixed generation” probability.
+    Sample τ_text ~ Unif[0, 2] (Algorithm 3, line 2).
 
-    We implement:
-      with prob p: τ_text ~ Unif[1,2]
-      else:        τ_text ~ Unif[0,1]
+    When τ_text > 1, t_text = min(1, τ_text) = 1, meaning text is fully
+    unmasked while images may still be noised — the “mixed generation” regime
+    described in the paper (Sec 3.0.1).
     """
     B = int(batch_size)
-    p = float(mixed_generation_prob or 0.0)
-    p = max(0.0, min(1.0, p))
-    base = torch.rand((B, 1), device=device)
-    choose_mixed = (torch.rand((B, 1), device=device) < p).to(torch.float32)
-    return base + choose_mixed
+    return torch.rand((B, 1), device=device) * 2.0
 
 
 def tau_to_t_text(tau_text: torch.Tensor) -> torch.Tensor:

@@ -122,7 +122,7 @@ OneFlow 还需要 `κ^{-1}(u)`（论文 Eq. 28）。实现策略：
 （对应论文 Algorithm 3 第 5-14 行）
 
 给定 ground-truth token 序列 \(X\)：
-- 采样 `τ_text`：通常 `Unif[0,1]`，也可按 `mixed_generation_prob` 以一定概率改为 `Unif[1,2]`；设 `t_text = min(1, τ_text)`。
+- 采样 `τ_text ~ Unif[0, 2]`；设 `t_text = min(1, τ_text)`。
 - 对每个 token 做 κ-keep：保留概率 `κ(t_text)`；BOS 强制保留。
 - 构造：
   - `X_t`: 保留 token 形成的子序列（保持顺序）

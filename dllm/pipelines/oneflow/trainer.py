@@ -44,10 +44,6 @@ class OneFlowTrainer(transformers.Trainer):
     @dataclass
     class OneFlowConfig(TrainingArguments):
         time_epsilon: float = 1e-3
-        # Paper (arXiv:2510.03506, Sec 3.0.1): probability of sampling τ_text in [1,2]
-        # which corresponds to “clean text concurrently with image generation”.
-        # They report using 0 or 0.2.
-        mixed_generation_prob: float = 0.0
         # Paper (Sec 2.1.1): insertion predictions are t-independent in practice.
         # If False, we do NOT condition text-token heads (π/λ/Q) on t_text (times are set constant for text tokens).
         condition_text_on_time: bool = False
@@ -473,7 +469,6 @@ class OneFlowTrainer(transformers.Trainer):
         tau_text_cpu = sample_tau_text(
             batch_size=B,
             device=cpu,
-            mixed_generation_prob=float(getattr(self.args, "mixed_generation_prob", 0.0) or 0.0),
         )
         t_text_cpu = tau_to_t_text(tau_text_cpu)  # [B,1] in [0,1]
 

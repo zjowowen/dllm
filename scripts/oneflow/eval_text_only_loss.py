@@ -52,7 +52,6 @@ class Args:
     seed: int = 42
 
     # Sampling/noising config (match training defaults)
-    mixed_generation_prob: float = 0.0
     condition_text_on_time: bool = False
     scheduler_cls: str = "LinearKappaScheduler"
 
@@ -91,7 +90,6 @@ def _eval_model(
     batch_size: int,
     num_batches: int,
     seed: int,
-    mixed_generation_prob: float,
     condition_text_on_time: bool,
 ) -> dict[str, float]:
     model = model.to(device).eval()
@@ -128,7 +126,7 @@ def _eval_model(
         B = len(x1_ids)
         # ---- match trainer perf path: sample τ/t/κ on CPU to avoid device sync ----
         tau_text_cpu = sample_tau_text(
-            batch_size=B, device=cpu, mixed_generation_prob=float(mixed_generation_prob)
+            batch_size=B, device=cpu
         )
         t_text_cpu = tau_to_t_text(tau_text_cpu)
         k_keep_cpu = scheduler.kappa(t_text_cpu).to(cpu)  # [B,1]
@@ -227,7 +225,6 @@ def main():
         batch_size=int(args.batch_size),
         num_batches=int(args.num_batches),
         seed=int(args.seed),
-        mixed_generation_prob=float(args.mixed_generation_prob),
         condition_text_on_time=bool(args.condition_text_on_time),
     )
 
@@ -250,7 +247,6 @@ def main():
             batch_size=int(args.batch_size),
             num_batches=int(args.num_batches),
             seed=int(args.seed),  # same noising RNG indices
-            mixed_generation_prob=float(args.mixed_generation_prob),
             condition_text_on_time=bool(args.condition_text_on_time),
         )
         print("\n=== Eq7 loss (random init) ===")

@@ -154,7 +154,6 @@ def main() -> None:
     p.add_argument("--prompt_len", type=int, default=2, help="0 disables prompt forcing")
 
     # scheduler / τ_text sampling
-    p.add_argument("--mixed_generation_prob", type=float, default=0.0)
     p.add_argument("--fixed_tau_text", type=float, default=0.2, help="set <0 to resample each step")
     p.add_argument(
         "--resample_noising_each_step",
@@ -249,7 +248,6 @@ def main() -> None:
                 tau_text = sample_tau_text(
                     batch_size=B,
                     device=device,
-                    mixed_generation_prob=float(args.mixed_generation_prob),
                 )
             t_text = tau_to_t_text(tau_text)
             kappa_keep = sched.kappa(t_text).to(device)
