@@ -42,8 +42,17 @@ class OneFlowConfig:
     num_residual_streams: int = 1
     num_residual_fracs: int = 4
 
+    # If True, tie to_q_logits.weight to text_embed.weight (weight tying).
+    # Inspired by EditFlow's init_editflow_from_src which copies lm_head weights
+    # to sub_logits/ins_logits heads for reduced cold-start instability.
+    tie_q_logits_to_embedding: bool = False
+
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
+
+    def to_json_string(self) -> str:
+        # Mirror HF PretrainedConfig API used by Trainer integrations (e.g., W&B/TensorBoard).
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
 
 
 class OneFlowModel(nn.Module):
@@ -105,6 +114,12 @@ class OneFlowModel(nn.Module):
         self.to_pi = nn.Linear(config.dim, 1)
         self.to_lambda = nn.Linear(config.dim, 1)
         self.to_q_logits = nn.Linear(config.dim, config.vocab_size)
+
+        # Optional weight tying: share to_q_logits.weight with text_embed.weight.
+        # This is analogous to EditFlow's init_editflow_from_src which copies
+        # lm_head weights to sub_logits/ins_logits, reducing cold-start instability.
+        if getattr(config, "tie_q_logits_to_embedding", False):
+            self.to_q_logits.weight = self.text_embed.weight
 
         # image head (velocity / flow in latent space)
         self.to_v = nn.Linear(config.dim, config.dim_latent, bias=False)

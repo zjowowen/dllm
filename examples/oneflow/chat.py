@@ -11,8 +11,16 @@ from dataclasses import dataclass
 import torch
 import transformers
 
+import dllm
 from dllm.pipelines.oneflow.models import OneFlowModel
+from dllm.pipelines.oneflow.runtime_config import (
+    DEFAULT_TEXT_SAMPLER_RUNTIME,
+    load_runtime_config,
+    resolve_section_settings,
+)
 from dllm.pipelines.oneflow.sampler import OneFlowSampler, OneFlowSamplerConfig, OneFlowSamplerOutput
+
+logger = dllm.utils.get_default_logger(__name__)
 
 
 @dataclass
@@ -25,11 +33,14 @@ class ScriptArguments:
 
 @dataclass
 class SamplerArgs(OneFlowSamplerConfig):
-    dt: float = 0.05
-    max_steps: int = 256
+    dt: float | None = None
+    max_steps: int | None = None
     image_num_tokens: int = 64
-    temperature: float = 0.0
-    use_pi_gate: bool = True
+    temperature: float | None = None
+    use_pi_gate: bool | None = None
+    max_w: float | None = None
+    condition_text_on_time: bool | None = None
+    kappa_scheduler_cls: str | None = None
     return_dict: bool = True
 
 
@@ -64,6 +75,45 @@ def main():
     model = model.to(device)
 
     sampler = OneFlowSampler(model=model, tokenizer=tokenizer)
+    runtime_cfg = load_runtime_config(script_args.model_dir)
+    resolved_sampling, override_keys, applied_ckpt_keys = resolve_section_settings(
+        runtime_config=runtime_cfg,
+        section_name="sampling",
+        cli_overrides={
+            "scheduler_cls": sampler_args.kappa_scheduler_cls,
+            "dt": sampler_args.dt,
+            "max_steps": sampler_args.max_steps,
+            "temperature": sampler_args.temperature,
+            "use_pi_gate": sampler_args.use_pi_gate,
+            "append_only": sampler_args.append_only,
+            "edit_prompt": sampler_args.edit_prompt,
+            "condition_text_on_time": sampler_args.condition_text_on_time,
+            "max_w": sampler_args.max_w,
+        },
+        defaults=DEFAULT_TEXT_SAMPLER_RUNTIME,
+    )
+    if runtime_cfg is None:
+        logger.warning(
+            "No oneflow_runtime_config.json found in model_dir; using built-in sampler defaults."
+        )
+    if applied_ckpt_keys:
+        logger.info(f"Using checkpoint runtime config for sampler keys: {sorted(applied_ckpt_keys)}")
+    if override_keys:
+        logger.warning(
+            f"CLI overrides checkpoint runtime config for sampler keys: {sorted(override_keys)}"
+        )
+
+    sampler_args.kappa_scheduler_cls = str(resolved_sampling["scheduler_cls"])
+    sampler_args.dt = float(resolved_sampling["dt"])
+    sampler_args.max_steps = int(resolved_sampling["max_steps"])
+    sampler_args.temperature = float(resolved_sampling["temperature"])
+    sampler_args.use_pi_gate = bool(resolved_sampling["use_pi_gate"])
+    sampler_args.append_only = bool(resolved_sampling["append_only"])
+    sampler_args.edit_prompt = bool(resolved_sampling["edit_prompt"])
+    sampler_args.condition_text_on_time = bool(resolved_sampling["condition_text_on_time"])
+    sampler_args.max_w = (
+        None if resolved_sampling["max_w"] is None else float(resolved_sampling["max_w"])
+    )
 
     print("OneFlow chat. Type a prompt and press Enter. Ctrl+C to exit.\n")
 

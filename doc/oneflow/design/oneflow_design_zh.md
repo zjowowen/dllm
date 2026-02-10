@@ -141,7 +141,37 @@ bag 的构造与论文一致（伪码）：
 OneFlow 采用论文 Eq. (7) 的组合 loss（与 Edit Flows 原始 CTMC 目标不同）：
 - **token CE**：对 bag-of-tokens 的每个 token 做交叉熵（Eq. 6）。
 - **π BCE**：用二分类判别 `k_i==0` / `k_i>0`（Eq. 5）。
-- **λ_nonzero Poisson**：仅对 `k_i>0` 位置训练计数强度（Eq. 4）。
+- **λ_nonzero 零截断 Poisson**：仅对 `k_i>0` 位置训练计数强度（Eq. 5）。
+
+### λ loss 详解：零截断 Poisson（zero-truncated Poisson）
+
+论文 Eq. 5 定义的插入计数分布是一个 **零膨胀 Poisson**（zero-inflated Poisson）：
+
+```
+P(k = 0) = π
+P(k)     = (1 - π) · Pois(k; λ_nonzero | k > 0),   k ≥ 1
+```
+
+其中 `Pois(k; λ | k > 0)` 是**零截断 Poisson 分布**，不是普通 Poisson：
+
+```
+Pois(k; λ | k > 0) = Pois(k; λ) / (1 - e^{-λ})
+                       = λ^k · e^{-λ} / (k! · (1 - e^{-λ}))
+```
+
+分母的 `1 - e^{-λ}` 是归一化常数，确保 ∑_{k=1}^{∞} P(k) = 1。
+
+取负对数（省略常数项 log k!）得到训练目标：
+
+```
+L_λ = λ - k log λ + log(1 - e^{-λ})
+```
+
+与普通 Poisson NLL（`λ - k log λ`）相比，多了截断修正项 `log(1 - e^{-λ})`。这个修正项的影响：
+- 当 λ 较大（>3）时，e^{-λ} ≈ 0，修正项 ≈ 0，几乎无影响；
+- 当 λ 较小时，修正项显著地把 λ 往更大的方向推，因为截断 Poisson 的条件均值 `λ/(1-e^{-λ})` 始终大于 λ。
+
+代码实现中使用 `torch.log1p(-torch.exp(-λ))` 计算修正项，数值稳定。
 
 重要实现说明：
 - **不使用** \(\\dot\\kappa/(1-\\kappa)\) 对 loss 加权（论文明确说明经验上更好）。

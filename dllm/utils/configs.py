@@ -50,7 +50,7 @@ class DataArguments:
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
     output_dir: str = None  # overwrite this
-    report_to: str = "wandb"
+    report_to: list[str] = field(default_factory=lambda: ["wandb"])
     overwrite_output_dir: bool = True
     seed: int = 42
     num_train_epochs: float = 10

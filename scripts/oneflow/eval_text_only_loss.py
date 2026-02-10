@@ -37,6 +37,11 @@ from dllm.core.schedulers import make_kappa_scheduler
 from dllm.pipelines.ctmc_utils import pad_1d
 from dllm.pipelines.oneflow.losses import text_loss_paper_eq7_fast
 from dllm.pipelines.oneflow.models import OneFlowConfig, OneFlowModel
+from dllm.pipelines.oneflow.runtime_config import (
+    DEFAULT_TEXT_EVAL_RUNTIME,
+    load_runtime_config,
+    resolve_section_settings,
+)
 from dllm.pipelines.oneflow.sequence_ops import build_noised_xt_and_bags, sample_tau_text, tau_to_t_text
 
 
@@ -52,8 +57,9 @@ class Args:
     seed: int = 42
 
     # Sampling/noising config (match training defaults)
-    condition_text_on_time: bool = False
-    scheduler_cls: str = "LinearKappaScheduler"
+    condition_text_on_time: bool | None = None
+    scheduler_cls: str | None = None
+    tau_text_max: float | None = None
 
     compare_random: bool = False
 
@@ -91,6 +97,7 @@ def _eval_model(
     num_batches: int,
     seed: int,
     condition_text_on_time: bool,
+    tau_text_max: float,
 ) -> dict[str, float]:
     model = model.to(device).eval()
     scheduler = make_kappa_scheduler(str(scheduler_cls))
@@ -126,7 +133,9 @@ def _eval_model(
         B = len(x1_ids)
         # ---- match trainer perf path: sample τ/t/κ on CPU to avoid device sync ----
         tau_text_cpu = sample_tau_text(
-            batch_size=B, device=cpu
+            batch_size=B,
+            device=cpu,
+            tau_text_max=float(tau_text_max),
         )
         t_text_cpu = tau_to_t_text(tau_text_cpu)
         k_keep_cpu = scheduler.kappa(t_text_cpu).to(cpu)  # [B,1]
@@ -216,16 +225,44 @@ def main():
         raise ValueError("dataset train split must contain 'input_ids'")
 
     trained = OneFlowModel.from_pretrained(args.model_dir, map_location="cpu")
+    runtime_cfg = load_runtime_config(args.model_dir)
+    resolved_eval, override_keys, applied_ckpt_keys = resolve_section_settings(
+        runtime_config=runtime_cfg,
+        section_name="training",
+        cli_overrides={
+            "scheduler_cls": args.scheduler_cls,
+            "tau_text_max": args.tau_text_max,
+            "condition_text_on_time": args.condition_text_on_time,
+        },
+        defaults=DEFAULT_TEXT_EVAL_RUNTIME,
+    )
+    if runtime_cfg is None:
+        dllm.utils.get_default_logger(__name__).warning(
+            "No oneflow_runtime_config.json found in model_dir; falling back to built-in eval defaults."
+        )
+    if applied_ckpt_keys:
+        dllm.utils.get_default_logger(__name__).info(
+            f"Using checkpoint runtime config for eval keys: {sorted(applied_ckpt_keys)}"
+        )
+    if override_keys:
+        dllm.utils.get_default_logger(__name__).warning(
+            f"CLI overrides checkpoint runtime config for eval keys: {sorted(override_keys)}"
+        )
+
+    scheduler_cls = str(resolved_eval["scheduler_cls"])
+    tau_text_max = float(resolved_eval["tau_text_max"])
+    condition_text_on_time = bool(resolved_eval["condition_text_on_time"])
     trained_metrics = _eval_model(
         model=trained,
         tokenizer=tokenizer,
         train_ds=train,
         device=device,
-        scheduler_cls=args.scheduler_cls,
+        scheduler_cls=scheduler_cls,
         batch_size=int(args.batch_size),
         num_batches=int(args.num_batches),
         seed=int(args.seed),
-        condition_text_on_time=bool(args.condition_text_on_time),
+        condition_text_on_time=condition_text_on_time,
+        tau_text_max=tau_text_max,
     )
 
     print("\n=== Eq7 loss (trained) ===")
@@ -243,11 +280,12 @@ def main():
             tokenizer=tokenizer,
             train_ds=train,
             device=device,
-            scheduler_cls=args.scheduler_cls,
+            scheduler_cls=scheduler_cls,
             batch_size=int(args.batch_size),
             num_batches=int(args.num_batches),
             seed=int(args.seed),  # same noising RNG indices
-            condition_text_on_time=bool(args.condition_text_on_time),
+            condition_text_on_time=condition_text_on_time,
+            tau_text_max=tau_text_max,
         )
         print("\n=== Eq7 loss (random init) ===")
         print(json.dumps(rand_metrics, indent=2))

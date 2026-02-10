@@ -11,9 +11,10 @@ import torch
 import torch.nn.functional as F
 import transformers
 
-from dllm.core.schedulers import BaseKappaScheduler, CubicKappaScheduler
+from dllm.core.schedulers import BaseKappaScheduler, LinearKappaScheduler
 from dllm.pipelines.ctmc_utils import pad_1d
 from dllm.pipelines.oneflow.losses import (
+    ctmc_loss_vectorized,
     image_loss_flow_matching,
     safe_log,
     text_loss_paper_eq7_fast,
@@ -26,6 +27,7 @@ from dllm.pipelines.oneflow.sequence_ops import (
     sample_tau_text,
     tau_to_t_text,
 )
+from dllm.pipelines.oneflow.runtime_config import build_runtime_config, save_runtime_config
 from dllm.pipelines.oneflow.utils import ONEFLOW_IMAGE_TOKEN
 from dllm.utils.configs import TrainingArguments
 
@@ -44,6 +46,9 @@ class OneFlowTrainer(transformers.Trainer):
     @dataclass
     class OneFlowConfig(TrainingArguments):
         time_epsilon: float = 1e-3
+        # Upper bound for τ_text sampling (default 2.0 per paper).
+        # Set to 1.0 to sample τ_text ~ Unif[0,1] for text-only validation.
+        tau_text_max: float = 2.0
         # Paper (Sec 2.1.1): insertion predictions are t-independent in practice.
         # If False, we do NOT condition text-token heads (π/λ/Q) on t_text (times are set constant for text tokens).
         condition_text_on_time: bool = False
@@ -82,7 +87,7 @@ class OneFlowTrainer(transformers.Trainer):
         **kwargs,
     ):
         super().__init__(args=args, *pargs, **kwargs)
-        self.scheduler = scheduler if scheduler is not None else CubicKappaScheduler()
+        self.scheduler = scheduler if scheduler is not None else LinearKappaScheduler()
         # For split-loss logging at `logging_steps` cadence.
         self._oneflow_pending_logs: dict[int, dict[str, float]] = {}
         self._oneflow_ga_micro_step: int = 0
@@ -90,10 +95,12 @@ class OneFlowTrainer(transformers.Trainer):
         self._oneflow_step_img_sum: float = 0.0
         self._oneflow_step_imgtok_sum: float = 0.0
         self._oneflow_step_count: int = 0
+        self._oneflow_step_extra_sums: dict[str, float] = {}
         self._oneflow_interval_text_sum: float = 0.0
         self._oneflow_interval_img_sum: float = 0.0
         self._oneflow_interval_imgtok_sum: float = 0.0
         self._oneflow_interval_count: int = 0
+        self._oneflow_interval_extra_sums: dict[str, float] = {}
         # ---- perf timing buffers (rank0) -----------------------------------------
         self._oneflow_last_profile: dict[str, float] | None = None
         self._oneflow_prof_ga_micro_step: int = 0
@@ -303,6 +310,7 @@ class OneFlowTrainer(transformers.Trainer):
         loss_text: torch.Tensor,
         loss_img: torch.Tensor,
         img_tokens_total: float,
+        extra_metrics: dict[str, torch.Tensor] | None = None,
     ) -> None:
         """
         Track split losses and schedule them to be logged at `logging_steps`.
@@ -321,13 +329,18 @@ class OneFlowTrainer(transformers.Trainer):
         lt = loss_text.detach()
         li = loss_img.detach()
         it = torch.tensor(float(img_tokens_total), device=lt.device, dtype=torch.float32)
+        extra_metrics = extra_metrics or {}
+        extra_reduced: dict[str, torch.Tensor] = {}
         try:
             lt = self.accelerator.reduce(lt, reduction="mean")
             li = self.accelerator.reduce(li, reduction="mean")
             it = self.accelerator.reduce(it, reduction="mean")
+            for name, val in extra_metrics.items():
+                extra_reduced[name] = self.accelerator.reduce(val.detach(), reduction="mean")
         except Exception:
             # Single-process / no accelerator reduce available.
-            pass
+            for name, val in extra_metrics.items():
+                extra_reduced[name] = val.detach()
 
         # Only rank0 maintains logging buffers (after collectives have run).
         if not self.is_world_process_zero():
@@ -338,6 +351,10 @@ class OneFlowTrainer(transformers.Trainer):
         self._oneflow_step_text_sum += float(lt.item())
         self._oneflow_step_img_sum += float(li.item())
         self._oneflow_step_imgtok_sum += float(it.item())
+        for name, val in extra_reduced.items():
+            self._oneflow_step_extra_sums[name] = self._oneflow_step_extra_sums.get(name, 0.0) + float(
+                val.item()
+            )
         self._oneflow_step_count += 1
 
         ga = int(getattr(self.args, "gradient_accumulation_steps", 1) or 1)
@@ -349,16 +366,25 @@ class OneFlowTrainer(transformers.Trainer):
         step_text = self._oneflow_step_text_sum / max(1, self._oneflow_step_count)
         step_img = self._oneflow_step_img_sum / max(1, self._oneflow_step_count)
         step_imgtok = self._oneflow_step_imgtok_sum / max(1, self._oneflow_step_count)
+        step_extra = {
+            name: val / max(1, self._oneflow_step_count)
+            for name, val in self._oneflow_step_extra_sums.items()
+        }
 
         self._oneflow_step_text_sum = 0.0
         self._oneflow_step_img_sum = 0.0
         self._oneflow_step_imgtok_sum = 0.0
+        self._oneflow_step_extra_sums = {}
         self._oneflow_step_count = 0
 
         # ---- interval accumulation (to mirror Trainer's `loss`) -------------------
         self._oneflow_interval_text_sum += float(step_text)
         self._oneflow_interval_img_sum += float(step_img)
         self._oneflow_interval_imgtok_sum += float(step_imgtok)
+        for name, val in step_extra.items():
+            self._oneflow_interval_extra_sums[name] = (
+                self._oneflow_interval_extra_sums.get(name, 0.0) + float(val)
+            )
         self._oneflow_interval_count += 1
 
         logging_steps = int(getattr(self.args, "logging_steps", 0) or 0)
@@ -368,10 +394,14 @@ class OneFlowTrainer(transformers.Trainer):
             return
 
         denom = max(1, self._oneflow_interval_count)
+        extra_logs = {
+            name: float(val / denom) for name, val in self._oneflow_interval_extra_sums.items()
+        }
         self._oneflow_pending_logs[int(next_step)] = {
             "loss_text": float(self._oneflow_interval_text_sum / denom),
             "loss_img": float(self._oneflow_interval_img_sum / denom),
             "img_tokens_total": float(self._oneflow_interval_imgtok_sum / denom),
+            **extra_logs,
         }
 
         # reset interval buffers after scheduling a log
@@ -379,6 +409,7 @@ class OneFlowTrainer(transformers.Trainer):
         self._oneflow_interval_img_sum = 0.0
         self._oneflow_interval_imgtok_sum = 0.0
         self._oneflow_interval_count = 0
+        self._oneflow_interval_extra_sums = {}
 
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         """
@@ -388,36 +419,39 @@ class OneFlowTrainer(transformers.Trainer):
         is not a HF PreTrainedModel) it won't save our custom `oneflow_config.json`.
 
         We keep Trainer's default behavior (weights/tokenizer/training_args), and also
-        write `oneflow_config.json` into each checkpoint dir.
+        write:
+        - `oneflow_config.json` (model architecture config)
+        - `oneflow_runtime_config.json` (train/eval/sample consistency metadata)
         """
         super()._save(output_dir=output_dir, state_dict=state_dict)
 
         out_dir = output_dir if output_dir is not None else self.args.output_dir
         cfg_path = os.path.join(out_dir, "oneflow_config.json")
-        if os.path.exists(cfg_path):
-            return
+        if not os.path.exists(cfg_path):
+            # Unwrap model from DDP/Accelerate wrappers.
+            try:
+                unwrapped = self.accelerator.unwrap_model(self.model, keep_torch_compile=False)
+            except Exception:
+                unwrapped = getattr(self.model, "module", self.model)
 
-        # Unwrap model from DDP/Accelerate wrappers.
-        try:
-            unwrapped = self.accelerator.unwrap_model(self.model, keep_torch_compile=False)
-        except Exception:
-            unwrapped = getattr(self.model, "module", self.model)
+            cfg = getattr(unwrapped, "config", None)
+            cfg_dict = None
+            if dataclasses.is_dataclass(cfg):
+                cfg_dict = dataclasses.asdict(cfg)
+            elif hasattr(cfg, "to_dict"):
+                cfg_dict = cfg.to_dict()
+            elif isinstance(cfg, dict):
+                cfg_dict = cfg
 
-        cfg = getattr(unwrapped, "config", None)
-        if cfg is None:
-            return
+            if cfg_dict is not None:
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(cfg_dict, f, ensure_ascii=False, indent=2)
 
-        if dataclasses.is_dataclass(cfg):
-            cfg_dict = dataclasses.asdict(cfg)
-        elif hasattr(cfg, "to_dict"):
-            cfg_dict = cfg.to_dict()
-        elif isinstance(cfg, dict):
-            cfg_dict = cfg
-        else:
-            return
-
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(cfg_dict, f, ensure_ascii=False, indent=2)
+        runtime_cfg = build_runtime_config(
+            training_args=self.args,
+            scheduler=self.scheduler,
+        )
+        save_runtime_config(out_dir, runtime_cfg)
 
     def compute_loss(
         self,
@@ -469,6 +503,7 @@ class OneFlowTrainer(transformers.Trainer):
         tau_text_cpu = sample_tau_text(
             batch_size=B,
             device=cpu,
+            tau_text_max=float(getattr(self.args, "tau_text_max", 2.0) or 2.0),
         )
         t_text_cpu = tau_to_t_text(tau_text_cpu)  # [B,1] in [0,1]
 
@@ -601,36 +636,28 @@ class OneFlowTrainer(transformers.Trainer):
 
             # ---- text loss ---------------------------------------------------------
             t_loss0 = time.perf_counter() if prof_on else 0.0
+            extra_metrics: dict[str, torch.Tensor] = {}
             if text_loss_type == "ctmc":
                 if w is None:
                     raise RuntimeError("text_loss_type='ctmc' requires w(t) but w is None.")
                 logQ = F.log_softmax(q_logits, dim=-1)
-                # CTMC-style loss (legacy): survival + positive term, weighted by w(t).
-                mask_f = x_mask.float()
-                Lambda_hat = (lam * mask_f).sum(dim=1)  # [B]
-                L1 = torch.tensor([len(x) for x in x1_ids], device=device, dtype=torch.float)
-                denom = (
-                    L1.clamp_min(1.0)
-                    if bool(getattr(self.args, "normalize_text_loss_by_length", True))
-                    else torch.ones_like(L1)
+                # Vectorized CTMC-style loss: survival + positive term, weighted by w(t).
+                ctmc = ctmc_loss_vectorized(
+                    lam=lam,
+                    logQ=logQ,
+                    bags_list=bags_list,
+                    w=w,
+                    x1_lengths=[len(x) for x in x1_ids],
+                    xt_positions=None,
+                    normalize_by_length=bool(
+                        getattr(self.args, "normalize_text_loss_by_length", True)
+                    ),
                 )
-                loss_surv = ((w * Lambda_hat) / denom).mean()
-
-                pos_terms = []
-                for b in range(B):
-                    lp = x_tok.new_zeros((), dtype=torch.float32)
-                    cur_len = int(x_mask[b].sum().item())
-                    for i in range(cur_len):
-                        bag = bags_list[b][i]
-                        if not bag:
-                            continue
-                        lp = lp - safe_log(lam[b, i]) * float(len(bag))
-                        tok = torch.tensor(bag, device=device, dtype=torch.long)
-                        lp = lp - logQ[b, i].gather(dim=-1, index=tok).sum()
-                    pos_terms.append(lp)
-                loss_pos_per = torch.stack(pos_terms)  # [B]
-                loss_pos = ((w * loss_pos_per) / denom).mean()
-                loss_text = loss_surv + loss_pos
+                loss_text = ctmc.total
+                extra_metrics = {
+                    "loss_text_surv": ctmc.loss_surv,
+                    "loss_text_pos": ctmc.loss_pos,
+                }
             else:
                 if bool(getattr(self.args, "paper_loss_from_logits", False)):
                     tl = text_loss_paper_eq7_fast_from_logits(
@@ -656,6 +683,11 @@ class OneFlowTrainer(transformers.Trainer):
                         ),
                     )
                 loss_text = tl.total
+                extra_metrics = {
+                    "loss_text_pi": tl.loss_pi,
+                    "loss_text_lam": tl.loss_lam,
+                    "loss_text_tok": tl.loss_tok,
+                }
             if prof_on:
                 if prof_sync:
                     self._maybe_sync_device(device)
@@ -667,7 +699,51 @@ class OneFlowTrainer(transformers.Trainer):
                 loss_text=loss_text,
                 loss_img=torch.zeros_like(loss_text),
                 img_tokens_total=0.0,
+                extra_metrics=extra_metrics,
             )
+            # ---- optional debug (print once, rank0) ----------------------------------
+            if bool(getattr(self.args, "debug_log_first_batch", False)) and self.is_world_process_zero():
+                if not hasattr(self, "_oneflow_debug_first_batch_printed"):
+                    setattr(self, "_oneflow_debug_first_batch_printed", True)
+                    try:
+                        step = int(getattr(getattr(self, "state", None), "global_step", -1))
+                    except Exception:
+                        step = -1
+                    x0 = x1_ids[0] if x1_ids else []
+                    tok = getattr(self, "processing_class", None)
+                    unk_id = int(tok.unk_token_id) if tok is not None and tok.unk_token_id is not None else None
+                    num_unk = (
+                        int(sum(int(t) == int(unk_id) for t in x0)) if (unk_id is not None and x0) else 0
+                    )
+                    unk_ratio = (float(num_unk) / float(len(x0))) if x0 else 0.0
+                    try:
+                        preview = (
+                            tok.decode(x0[:80], skip_special_tokens=False)
+                            if tok is not None and x0
+                            else ""
+                        )
+                    except Exception:
+                        preview = ""
+                    # Prefer paper-loss splits when available; else log CTMC splits.
+                    if "loss_text_pi" in extra_metrics:
+                        pi_v = float(extra_metrics["loss_text_pi"].item())
+                        lam_v = float(extra_metrics["loss_text_lam"].item())
+                        tok_v = float(extra_metrics["loss_text_tok"].item())
+                        loss_detail = f"loss_text_pi={pi_v:.6f} loss_text_lam={lam_v:.6f} loss_text_tok={tok_v:.6f}"
+                    elif "loss_text_surv" in extra_metrics:
+                        surv_v = float(extra_metrics["loss_text_surv"].item())
+                        pos_v = float(extra_metrics["loss_text_pos"].item())
+                        loss_detail = f"loss_text_surv={surv_v:.6f} loss_text_pos={pos_v:.6f}"
+                    else:
+                        loss_detail = ""
+                    print(
+                        "\n[oneflow-debug] first batch summary:\n"
+                        f"  step={step} B={B} has_images={has_images}\n"
+                        f"  loss_text={float(loss_text.item()):.6f} {loss_detail}\n"
+                        f"  sample0_len={len(x0)} sample0_num_unk={num_unk} "
+                        f"sample0_unk_ratio={unk_ratio:.4f}\n"
+                        + (f"  sample0_preview={preview}\n" if preview else "")
+                    )
             # Store breakdown for `training_step` to aggregate & log.
             if prof_on:
                 self._oneflow_last_profile = prof_times
@@ -723,40 +799,28 @@ class OneFlowTrainer(transformers.Trainer):
         )
 
         # ---- text loss (only over X_t token positions, not modality tokens) --------
+        extra_metrics: dict[str, torch.Tensor] = {}
         if text_loss_type == "ctmc":
             if w is None:
                 raise RuntimeError("text_loss_type='ctmc' requires w(t) but w is None.")
             logQ = F.log_softmax(q_logits, dim=-1)
-            # CTMC-style loss (legacy): survival + positive term, weighted by w(t).
-            Lambda_hat = torch.zeros((B,), device=device, dtype=torch.float32)
-            for b in range(B):
-                pos_idx = torch.tensor(xt_to_total_pos_list[b], device=device, dtype=torch.long)
-                Lambda_hat[b] = lam[b].gather(dim=0, index=pos_idx).sum()
-
-            L1 = torch.tensor([len(x) for x in x1_ids], device=device, dtype=torch.float)
-            denom = (
-                L1.clamp_min(1.0)
-                if bool(getattr(self.args, "normalize_text_loss_by_length", True))
-                else torch.ones_like(L1)
+            # Vectorized CTMC-style loss with xt_positions for mixed-modal.
+            ctmc = ctmc_loss_vectorized(
+                lam=lam,
+                logQ=logQ,
+                bags_list=bags_list,
+                w=w,
+                x1_lengths=[len(x) for x in x1_ids],
+                xt_positions=xt_to_total_pos_list,
+                normalize_by_length=bool(
+                    getattr(self.args, "normalize_text_loss_by_length", True)
+                ),
             )
-            loss_surv = ((w * Lambda_hat) / denom).mean()
-
-            pos_terms = []
-            for b in range(B):
-                lp = x_tok.new_zeros((), dtype=torch.float32)
-                xt_pos = xt_to_total_pos_list[b]
-                for i, pos in enumerate(xt_pos):
-                    bag = bags_list[b][i]
-                    if not bag:
-                        continue
-                    lp = lp - safe_log(lam[b, pos]) * float(len(bag))
-                    tok = torch.tensor(bag, device=device, dtype=torch.long)
-                    lp = lp - logQ[b, pos].gather(dim=-1, index=tok).sum()
-                pos_terms.append(lp)
-
-            loss_pos_per = torch.stack(pos_terms)  # [B]
-            loss_pos = ((w * loss_pos_per) / denom).mean()
-            loss_text = loss_surv + loss_pos
+            loss_text = ctmc.total
+            extra_metrics = {
+                "loss_text_surv": ctmc.loss_surv,
+                "loss_text_pos": ctmc.loss_pos,
+            }
         else:
             if bool(getattr(self.args, "paper_loss_from_logits", False)):
                 tl = text_loss_paper_eq7_fast_from_logits(
@@ -778,6 +842,11 @@ class OneFlowTrainer(transformers.Trainer):
                     normalize_by_n=bool(getattr(self.args, "normalize_text_loss_by_length", True)),
                 )
             loss_text = tl.total
+            extra_metrics = {
+                "loss_text_pi": tl.loss_pi,
+                "loss_text_lam": tl.loss_lam,
+                "loss_text_tok": tl.loss_tok,
+            }
 
         # ---- image flow matching loss --------------------------------------------
         v = out["v"]  # [B,L,dim_latent]
@@ -797,6 +866,7 @@ class OneFlowTrainer(transformers.Trainer):
             loss_text=loss_text,
             loss_img=loss_img,
             img_tokens_total=float(img.tokens_total.item()),
+            extra_metrics=extra_metrics,
         )
 
         # ---- optional debug (print once, rank0) ----------------------------------

@@ -360,7 +360,7 @@ def train():
 
     final_dir = os.path.join(training_args.output_dir, "checkpoint-final")
     os.makedirs(final_dir, exist_ok=True)
-    model.save_pretrained(final_dir)
+    trainer.save_model(final_dir)
     tokenizer.save_pretrained(final_dir)
 
 

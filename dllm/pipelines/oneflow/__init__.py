@@ -21,6 +21,7 @@ __all__ = [
     "sequence_ops",
     "losses",
     "trace",
+    "runtime_config",
     "models",
     # main entrypoints (lazy)
     "OneFlowTrainer",
@@ -30,7 +31,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:  # pragma: no cover
-    if name in {"trainer", "sampler", "utils", "sequence_ops", "losses", "trace", "models"}:
+    if name in {"trainer", "sampler", "utils", "sequence_ops", "losses", "trace", "runtime_config", "models"}:
         mod = import_module(f"{__name__}.{name}")
         globals()[name] = mod
         return mod

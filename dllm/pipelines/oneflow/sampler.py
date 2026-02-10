@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 
 from dllm.core.samplers.base import BaseSampler, SamplerConfig, SamplerOutput
-from dllm.core.schedulers import BaseKappaScheduler, LinearKappaScheduler
+from dllm.core.schedulers import BaseKappaScheduler, LinearKappaScheduler, make_kappa_scheduler
 from dllm.pipelines.ctmc_utils import sample_from_logits
 from dllm.pipelines.oneflow.sequence_ops import build_unified_sampler_inputs_bs1
 from dllm.pipelines.oneflow.sampler_ops import apply_insertions_right_to_left, p_lam, p_pi
@@ -36,11 +36,14 @@ class OneFlowSamplerConfig(SamplerConfig):
     suppress_token_ids: list[int] | None = None
     # Clamp scheduler weight w(t)=κ'(t)/(1-κ(t)) during sampling to avoid blow-up near t→1.
     # (For Linear κ(t)=t, w(t)=1/(1-t) diverges.)
-    max_w: float | None = None
+    max_w: float | None = 20.0
     # Paper (arXiv:2510.03506, Sec 2.1.1): insertion predictions are t-independent in practice.
     # If False, we feed a constant time value for *text tokens* (π/λ/Q do not depend on t_text).
     # Image latent tokens still use their own t_img.
     condition_text_on_time: bool = False
+    # Optional scheduler name override (e.g., from checkpoint runtime metadata).
+    # When set, this call will use the requested scheduler class.
+    kappa_scheduler_cls: str | None = None
     image_num_tokens: int = 64  # fixed number of latent tokens per image (v1)
     edit_prompt: bool = False  # if False, only allow insertions after the prompt
 
@@ -94,9 +97,13 @@ class OneFlowSampler(BaseSampler):
         condition_text_on_time = bool(
             kwargs.get("condition_text_on_time", config.condition_text_on_time)
         )
+        kappa_scheduler_cls = kwargs.get("kappa_scheduler_cls", config.kappa_scheduler_cls)
         image_num_tokens = int(kwargs.get("image_num_tokens", config.image_num_tokens))
         edit_prompt = bool(kwargs.get("edit_prompt", config.edit_prompt))
         return_dict = bool(kwargs.get("return_dict", config.return_dict))
+
+        if kappa_scheduler_cls is not None:
+            self.kappa_scheduler = make_kappa_scheduler(str(kappa_scheduler_cls))
 
         if len(inputs) != 1:
             raise NotImplementedError("OneFlowSampler v1 only supports bs=1")

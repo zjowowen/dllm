@@ -30,10 +30,28 @@
 - 抽取 CTMC 通用 helper 到共享模块并保持兼容。
 - 完成 OneFlow `prompt_len` 语义与相关约束的实现/测试。
 
+### 5) EditFlow 对齐实验（面向 text-only 收敛优化）
+基于 EditFlow 与 OneFlow 的对比分析（详见 `doc/oneflow/engineering/oneflow_editflow_textonly_comparison_zh.md`），按重要程度依次验证以下改进：
+
+| 实验 | 变更项 | 状态 | 结论 |
+|------|--------|------|------|
+| **A. 时间条件化** | `--condition_text_on_time` | ✅ 已验证 | loss ~29-34 波动，比基线高；时间条件化单独不足以改善 |
+| **B. CTMC loss + w(t)** | `--text_loss_type ctmc` | ✅ 已解除 | Python 循环已向量化 (~50x 加速)，详见 B2 |
+| **C. 权重共享** | `--tie_q_logits_to_embedding` | ✅ 已验证 | 初始 loss 高但快速下降，稳态 ~35-42 |
+| **D. 组合 A+C** | 时间条件化 + 权重共享 | ✅ 已验证 | 与 C 几乎一致，小数据上时间条件化无附加效果 |
+| **E. 大数据集** | D + fineweb-edu 100k | ✅ 已验证 | loss 持续下降至 ~42，**数据量是关键因素** |
+| **B2. CTMC (向量化)** | ctmc + fineweb-edu 100k | ✅ 已验证 | loss 从 12.2 → 6.0，收敛平稳，向量化 ~40-50x 加速 |
+| **G1. 大数据基线** | paper loss + fineweb-edu 100k | ✅ 已验证 | loss 从 53 → 28-29，后期波动较大 |
+| **G2. 大数据时间条件化** | G1 + `condition_text_on_time` | ✅ 已验证 | train_loss=31.013，与 G1 完全一致，时间条件化无效果 |
+
+实验详细记录见 `doc/oneflow/engineering/editflow_alignment_experiments_log.md`。
+
 ## 参考文档入口
 - 里程碑定义：`doc/oneflow/design/oneflow_design_zh.md`
 - 代码对齐审计：`doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
 - 归零式验证：`doc/oneflow/validation/oneflow_zero_validation_zh.md`
 - 过拟合排障：`doc/oneflow/validation/oneflow_overfit_debug_zh.md`
 - 训练计划：`doc/oneflow/guides/oneflow_text_training_plan_npu_zh.md`
+- EditFlow 对比分析：`doc/oneflow/engineering/oneflow_editflow_textonly_comparison_zh.md`
+- EditFlow 对齐实验记录：`doc/oneflow/engineering/editflow_alignment_experiments_log.md`
 

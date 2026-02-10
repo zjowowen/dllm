@@ -45,6 +45,11 @@ from typing import Iterable
 
 import torch
 import transformers
+from dllm.pipelines.oneflow.runtime_config import (
+    DEFAULT_TEXT_SAMPLER_RUNTIME,
+    load_runtime_config,
+    resolve_section_settings,
+)
 
 
 def _ngrams(seq: list[int], n: int) -> list[tuple[int, ...]]:
@@ -113,16 +118,18 @@ class Args:
 
     # sampling params
     seed: int = 42
-    dt: float = 0.05
-    max_steps: int = 512
-    temperature: float = 0.9
-    use_pi_gate: bool = True
-    append_only: bool = False
+    dt: float | None = None
+    max_steps: int | None = None
+    temperature: float | None = None
+    use_pi_gate: bool | None = None
+    append_only: bool | None = None
     suppress_whitespace_tokens: bool = False
     max_new_tokens: int | None = 256
     max_seq_len: int | None = 512
     max_insertions_per_step: int | None = 64
-    max_w: float | None = 20.0
+    max_w: float | None = None
+    condition_text_on_time: bool | None = None
+    kappa_scheduler_cls: str | None = None
 
     output_dir: str = "data/vis/overfit_infer_check"
 
@@ -189,19 +196,53 @@ def main():
     model = OneFlowModel.from_pretrained(args.model_dir, map_location="cpu").eval().to(device)
     sampler = OneFlowSampler(model=model, tokenizer=tokenizer)
 
+    runtime_cfg = load_runtime_config(args.model_dir)
+    resolved_sampling, override_keys, applied_ckpt_keys = resolve_section_settings(
+        runtime_config=runtime_cfg,
+        section_name="sampling",
+        cli_overrides={
+            "scheduler_cls": args.kappa_scheduler_cls,
+            "dt": args.dt,
+            "max_steps": args.max_steps,
+            "temperature": args.temperature,
+            "use_pi_gate": args.use_pi_gate,
+            "append_only": args.append_only,
+            "condition_text_on_time": args.condition_text_on_time,
+            "max_w": args.max_w,
+        },
+        defaults=DEFAULT_TEXT_SAMPLER_RUNTIME,
+    )
+    if runtime_cfg is None:
+        print("[warn] no oneflow_runtime_config.json found; using built-in sampler defaults")
+    if applied_ckpt_keys:
+        print(f"[info] using checkpoint runtime config keys: {sorted(applied_ckpt_keys)}")
+    if override_keys:
+        print(f"[warn] CLI overrides checkpoint runtime config keys: {sorted(override_keys)}")
+
+    dt = float(resolved_sampling["dt"])
+    max_steps = int(resolved_sampling["max_steps"])
+    temperature = float(resolved_sampling["temperature"])
+    use_pi_gate = bool(resolved_sampling["use_pi_gate"])
+    append_only = bool(resolved_sampling["append_only"])
+    condition_text_on_time = bool(resolved_sampling["condition_text_on_time"])
+    max_w = None if resolved_sampling["max_w"] is None else float(resolved_sampling["max_w"])
+    kappa_scheduler_cls = str(resolved_sampling["scheduler_cls"])
+
     cfg = OneFlowSamplerConfig(
-        dt=float(args.dt),
-        max_steps=int(args.max_steps),
-        temperature=float(args.temperature),
-        use_pi_gate=bool(args.use_pi_gate),
-        append_only=bool(args.append_only),
+        dt=dt,
+        max_steps=max_steps,
+        temperature=temperature,
+        use_pi_gate=use_pi_gate,
+        append_only=append_only,
         suppress_whitespace_tokens=bool(args.suppress_whitespace_tokens),
         max_new_tokens=args.max_new_tokens if args.max_new_tokens is None else int(args.max_new_tokens),
         max_seq_len=args.max_seq_len if args.max_seq_len is None else int(args.max_seq_len),
         max_insertions_per_step=args.max_insertions_per_step
         if args.max_insertions_per_step is None
         else int(args.max_insertions_per_step),
-        max_w=args.max_w if args.max_w is None else float(args.max_w),
+        max_w=max_w,
+        condition_text_on_time=condition_text_on_time,
+        kappa_scheduler_cls=kappa_scheduler_cls,
         image_num_tokens=0,  # text-only
         return_dict=True,
     )
@@ -253,16 +294,18 @@ def main():
         "paths": {"prompt": prompt_path, "ref": ref_path, "gen": gen_path},
         "sampling": {
             "seed": int(args.seed),
-            "dt": float(args.dt),
-            "max_steps": int(args.max_steps),
-            "temperature": float(args.temperature),
-            "use_pi_gate": bool(args.use_pi_gate),
-            "append_only": bool(args.append_only),
+            "dt": float(dt),
+            "max_steps": int(max_steps),
+            "temperature": float(temperature),
+            "use_pi_gate": bool(use_pi_gate),
+            "append_only": bool(append_only),
             "suppress_whitespace_tokens": bool(args.suppress_whitespace_tokens),
             "max_new_tokens": args.max_new_tokens,
             "max_seq_len": args.max_seq_len,
             "max_insertions_per_step": args.max_insertions_per_step,
-            "max_w": args.max_w,
+            "max_w": max_w,
+            "condition_text_on_time": condition_text_on_time,
+            "scheduler_cls": kappa_scheduler_cls,
         },
     }
 

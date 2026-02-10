@@ -1,0 +1,119 @@
+# EditFlow 推理流程（对照代码）
+
+你在 `SUGGESTIONS.md` 里的两个理解里，**当前代码实现更接近第 2 种**，但有一个关键补充：  
+每个时刻处理的不是固定 `N`，而是**当前长度 `T` 的序列**（`T` 会随插入/删除动态变化）。
+
+核心结论：
+
+1. **每个 `t` 步通常只做一次模型前向**（不是“先改完再同 `t` 再前向一次”）。  
+2. 这一次前向会同时给出：
+   - `del_rate_hat / sub_rate_hat / ins_rate_hat`（位置级速率）
+   - `sub_logits / ins_logits`（词表分布）
+3. 在同一个 `t` 步里，直接基于这些输出采样 DEL/SUB/INS，并一次性构造 `x_next`。  
+4. 下一次模型访问发生在**下一个时间步** `t + tau`，输入是新的 `x_next`。  
+
+---
+
+## 1) 入口和初始化
+
+参考 `dllm/pipelines/editflow/sampler.py` 的 `EditFlowSampler.sample`：
+
+- 输入 `x`（通常是 prompt token ids）；
+- 强制补 BOS（若缺失）；
+- `prompt_len = 当前长度`（用于后续保护 prompt）；
+- 若 `mask_length > 0`，在尾部一次性追加 `mask_length` 个 `<mask>`。
+
+因此，若你把原 prompt 长度记作 `N`，初始化后序列会变成 `N + mask_length`。  
+这一步是**采样循环开始前**做的，不是每个 `t` 都做。
+
+---
+
+## 2) 单步 `tau_leap_step` 在做什么
+
+参考 `dllm/pipelines/editflow/sampler.py` 的 `tau_leap_step`：
+
+### 2.1 前向（最多一次）
+
+- 默认：对当前序列 `x`（长度 `T`）前向一次，得到 5 个头输出。
+- 特殊优化：若 `time_independent=True` 且上一步“没有任何编辑”，可复用 `prev_out`，这一轮甚至可以**不前向**。
+
+> 也就是说：同一轮不会“前向两次”；最多一次，甚至零次（复用）。
+
+### 2.2 速率缩放
+
+先取模型输出的 `*_rate_hat`，再乘调度权重：
+
+- `w(t) = kappa'(t) / (1 - kappa(t))`
+- 当前默认是 `LinearKappaScheduler`，即 `kappa(t)=t`
+
+得到真正用于触发事件的 `del/sub/ins` 速率。
+
+### 2.3 prompt 保护（默认）
+
+当 `edit_prompt=False` 时：
+
+- prompt 区间禁止 DEL/SUB；
+- prompt 内部禁止 INS（但允许在 prompt 最后一个 token 右侧插入）。
+
+### 2.4 事件采样（同一步完成）
+
+在每个位置 `i` 上：
+
+- 先合并编辑触发率：`comb_rate = del_rate + sub_rate`
+- `comb_fire ~ Bernoulli(comb_rate * tau)`
+- 若触发编辑，再按
+  - `p_del = del_rate / (del_rate + sub_rate)`  
+  选择 DEL 或 SUB
+- INS 单独采样：`ins_fire ~ Bernoulli(ins_rate * tau)`
+- 若是 SUB / INS，再分别从 `sub_logits[i] / ins_logits[i]` 采样 token。
+
+### 2.5 应用编辑并生成 `x_next`
+
+从左到右构造新序列：
+
+- DEL：当前 token 不写入
+- SUB：写入采样的新 token
+- KEEP：写入原 token
+- 若该位置 INS 触发，再在其右侧追加插入 token
+
+于是新长度变为：
+
+`T_next = T - (#DEL) + (#INS)`
+
+这就是你提到的“长度可能从 `N` 变 `N+M`”的来源，但它是由 DEL/INS 动态决定的，并非固定只增不减。
+
+---
+
+## 3) 时间循环是怎样推进的
+
+`sample()` 的主循环：
+
+- 初始 `t=0`
+- 每轮执行一次 `tau_leap_step`
+- 然后 `t = min(1, t + tau)`
+- 到 `t >= 1 - time_epsilon` 停止
+
+所以是从 `t=0` 推进到 `t≈1`，不是反向。
+
+---
+
+## 4) 对你两个选项的直接回答
+
+### 选项 1（“同一个 t 先改成 N+M，再第二次访问模型处理 K 个变化 token”）
+
+**不是当前实现。**  
+代码里没有“同一 `t` 的第二次前向专门处理 K 个变化 token”这一步。
+
+### 选项 2（“t 时刻直接访问模型得到变化分布并采样，反复到 t=1”）
+
+**基本正确。**  
+更精确地说：在每个 `t`，对当前长度 `T` 的整段序列做一次（或复用）前向，得到 DEL/SUB/INS 的速率与 token 分布，采样并一次性编辑得到 `x_next`，再进入 `t+tau`。
+
+---
+
+## 5) 一个容易忽略的点：`t` 与模型头的关系
+
+在当前 `dllm/pipelines/editflow/models/*` 这些实现中，`forward` 虽然接收了 `t` 参数，但并未实际使用时间嵌入；  
+时间效应主要由采样器中的 `w(t)` 缩放体现。  
+这也是 `time_independent=True` 和“无编辑时可复用上一步输出”成立的原因之一。
+

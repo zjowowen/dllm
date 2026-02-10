@@ -13,19 +13,19 @@
 
 | 论文要求 | 代码现状 | 状态 | 备注 |
 |---|---|---|---|
-| 采样 \(\\tau_{text}\\in[0,2]\)，并令 \(t_{text}=\\min\\{1,\\tau_{text}\\}\) | 支持 `mixed_generation_prob=p`：`τ_text∼Unif[1,2]`（prob=p）否则 `Unif[0,1]`；`t_text=min(τ_text,1)` | ✅ 对齐（按论文 Sec 3.0.1） | 论文 Appendix E 写了 `Unif[0,2]`，但 Section 3.0.1 明确报告 mixed generation prob=0 或 0.2；代码按 Section 3 实现可控采样。 |
+| 采样 \(\\tau_{text}\\in[0,2]\)，并令 \(t_{text}=\\min\\{1,\\tau_{text}\\}\) | `τ_text ~ Unif[0, 2]`（Algorithm 3, line 2）；`t_text = min(τ_text, 1)` | ✅ 对齐 | 直接从 `Unif[0,2]` 采样，当 `τ_text > 1` 时 `t_text = 1`（文本完全保留，图像可能仍在 noising），自然实现了论文 Sec 3.0.1 描述的 mixed generation 机制。 |
 | token keep 概率用 \(\\kappa(\\min\\{1,\\tau_{text}\\})=\\kappa(t_{text})\) | `keep ~ Bernoulli(kappa(t_text))` | ✅ 对齐 | 代码额外 **强制保留 BOS**；若提供 `prompt_len` 则强制保留 prompt 前缀；若启用图像则强制保留 `<|oneflow_image|>` 占位符（便于按 interleaved schedule 决定是否删除）。 |
 | 构造 noisy \(X_t\) 与每个 slot 的 bag-of-tokens \(\\mathcal{A}_i\) | `xt_list` / `bags_list` | ✅ 对齐 | bag 语义为“每个保留 token 后的插入槽位”，与论文 Algorithm 3 的 `A_j` 结构一致（依赖 BOS 被保留以保证第一个 bag 存在）。 |
 | interleaved schedule：对每张图像采样 \(u\\sim\\text{Unif}(0,1)\)，\(\\tau_{img}=\\tau_{text}-\\kappa^{-1}(u)\)；若 \(\\tau_{img}<0\) 则图像 token 在该 snapshot 被删除并计入某个 bag；否则 \(t_{img}=\\min\\{1,\\tau_{img}\\}\) 并训练图像 flow matching | 实现了 `tau_img = tau_text - kappa_inverse(u)`，`tau_img<0` 删除 `<|oneflow_image|>` 并并入 bag；否则 `t_img=min(1,tau_img)` 并构造 `Y_t=tY1+(1-t)Y0` | ✅ 对齐 | 删除 token 时代码做了 bag 合并（删除一个“原本保留的 token”必须把其后 bag 合并进前一 bag），该处理是必要的。 |
 | 图像 loss：Flow Matching \(\\|v(Y_t,t)-(Y_1-Y_0)\\|^2\) | `loss_img = mse(v, flow_tgt)`（可按 token 数归一） | ✅ 对齐 |  |
-| 文本 loss：按 Eq. (7) 训练，包含：bag-of-tokens CE（Eq. 6）、zero-inflated 的 \(\\pi\) BCE（Eq. 5）、对非零缺失计数训练 \(\\lambda_{nonzero}\)（Eq. 4），并**明确不使用** \(\\dot\\kappa/(1-\\kappa)\) 对 loss 加权 | `text_loss_type=\"paper\"`（默认）实现 Eq (7)：token CE + BCE(pi) + Poisson(λ_nonzero,k>0)，且不对 loss 乘 w(t) | ✅ 对齐（默认） | 仍保留 `text_loss_type=\"ctmc\"` 作为 legacy 对照实现（会用 w(t) 加权）。 |
+| 文本 loss：按 Eq. (7) 训练，包含：bag-of-tokens CE（Eq. 6）、zero-inflated 的 \(\\pi\) BCE（Eq. 5）、对非零缺失计数训练 \(\\lambda_{nonzero}\)（Eq. 4），并**明确不使用** \(\\dot\\kappa/(1-\\kappa)\) 对 loss 加权 | `text_loss_type=\"paper\"`（默认）实现 Eq (7)：token CE + BCE(π) + **零截断 Poisson**(λ_nonzero, k>0)，且不对 loss 乘 w(t)。λ loss 公式：`λ - k log λ + log(1 - e^{-λ})`，其中 `log(1 - e^{-λ})` 为零截断修正项。 | ✅ 对齐（默认） | 仍保留 `text_loss_type=\"ctmc\"` 作为 legacy 对照实现（会用 w(t) 加权）。 |
 | 插入预测在实践中采用 **t-independent**（论文写明“不把 time 喂给网络预测 insertions”） | `condition_text_on_time=False`（默认）时，text token 的 `times` 置为常数（不随 `t_text` 变化）；图像 token 仍使用 `t_img` | ✅ 对齐（默认） | 若要回到“text 也条件于 time”，可设 `condition_text_on_time=True`。 |
 
 ---
 
 ## 1.1 小结（Trainer）
 
-当前 `OneFlowTrainer` 默认配置（`text_loss_type=\"paper\"` + `condition_text_on_time=False`）已对齐论文的 **Algorithm 3** 训练目标（Eq. 7 + interleaved schedule + flow matching）。并额外实现了论文 Section 3.0.1 提到的 `mixed_generation_prob`（可设 0/0.2）。
+当前 `OneFlowTrainer` 默认配置（`text_loss_type=\"paper\"` + `condition_text_on_time=False`）已对齐论文的 **Algorithm 3** 训练目标（Eq. 7 + interleaved schedule + flow matching）。τ_text 直接从 `Unif[0,2]` 采样（对齐 Algorithm 3 line 2），λ loss 使用零截断 Poisson（对齐 Eq. 5）。
 
 如需做对照实验，仍可将 `text_loss_type` 设为 `"ctmc"` 以启用 legacy 的 CTMC-style loss（会用 \(\\dot\\kappa/(1-\\kappa)\) 对 loss 加权）。
 
@@ -58,7 +58,7 @@
 - **预训练**：
   - **sequence length = 512**
   - **global batch size = 4096**
-  - **mixed generation probability = 0 或 0.2**（“clean text 与 image 并发生成”的概率）
+  - **mixed generation**：τ_text ~ Unif[0,2]，当 τ_text > 1 时文本完全保留、仅训练图像（“clean text 与 image 并发生成”）
 - **预训练数据**：filtered CC12M + YFCC + licensed data，总计 400M image-text pairs（Section 3.0.2）
 - **k-scheduler**：\(\kappa_t=t^k\) 的 ablation 显示 **线性 k=1 最好**（Appendix B.6）
 
@@ -79,9 +79,9 @@
 - **sequence length（默认）**：
   - caption token 上限常见为 `max_caption_tokens=128`（数据预处理侧），并在 unified 序列中包含图像 latent tokens（数量由 latent H×W 决定，例如 16×16→256 tokens）
   - ⇒ 总长度与论文的 512 可能同量级，但并非严格对齐（可按需要配置/裁剪）
-- **mixed generation probability（当前实现）**：
-  - `trainer.py` 支持 `mixed_generation_prob=p`：以概率 `p` 采样 `τ_text∼Unif[1,2]`，否则 `τ_text∼Unif[0,1]`
-  - 默认 `p=0.0`，可设为 `0.2` 对齐论文报告值 ✅
+- **τ_text 采样（当前实现）**：
+  - `sample_tau_text()` 默认从 `Unif[0, 2]` 采样（`tau_text_max=2.0`，可配置）
+  - 完全对齐论文 Algorithm 3 line 2 ✅
 
 *paper-unspecified（论文未在 Section 3 明确写出，至少我们当前审计范围未看到的）*：
 - optimizer 类型/β/ε/weight decay

@@ -99,16 +99,20 @@ def sample_tau_text(
     *,
     batch_size: int,
     device: torch.device,
+    tau_text_max: float = 2.0,
 ) -> torch.Tensor:
     """
-    Sample τ_text ~ Unif[0, 2] (Algorithm 3, line 2).
+    Sample τ_text ~ Unif[0, tau_text_max] (Algorithm 3, line 2).
 
     When τ_text > 1, t_text = min(1, τ_text) = 1, meaning text is fully
     unmasked while images may still be noised — the “mixed generation” regime
     described in the paper (Sec 3.0.1).
     """
     B = int(batch_size)
-    return torch.rand((B, 1), device=device) * 2.0
+    max_tau = float(tau_text_max)
+    if max_tau <= 0.0:
+        raise ValueError(f"tau_text_max must be > 0, got {tau_text_max}")
+    return torch.rand((B, 1), device=device) * max_tau
 
 
 def tau_to_t_text(tau_text: torch.Tensor) -> torch.Tensor:

@@ -156,6 +156,12 @@ def main() -> None:
     # scheduler / τ_text sampling
     p.add_argument("--fixed_tau_text", type=float, default=0.2, help="set <0 to resample each step")
     p.add_argument(
+        "--tau_text_max",
+        type=float,
+        default=2.0,
+        help="Upper bound for τ_text sampling when resampling (default: 2.0).",
+    )
+    p.add_argument(
         "--resample_noising_each_step",
         action="store_true",
         help="If set, rebuild X_t/bags every step (Algorithm-3 style).",
@@ -248,6 +254,7 @@ def main() -> None:
                 tau_text = sample_tau_text(
                     batch_size=B,
                     device=device,
+                    tau_text_max=float(args.tau_text_max),
                 )
             t_text = tau_to_t_text(tau_text)
             kappa_keep = sched.kappa(t_text).to(device)
