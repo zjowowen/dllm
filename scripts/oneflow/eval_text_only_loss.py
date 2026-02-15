@@ -23,6 +23,7 @@ Example (NPU):
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 from dataclasses import dataclass
@@ -55,6 +56,7 @@ class Args:
     batch_size: int = 8
     num_batches: int = 50
     seed: int = 42
+    seeds: str = ""  # Optional comma-separated list, e.g. "41,42,43"
 
     # Sampling/noising config (match training defaults)
     condition_text_on_time: bool | None = None
@@ -62,6 +64,7 @@ class Args:
     tau_text_max: float | None = None
 
     compare_random: bool = False
+    output_json: str = ""
 
 
 def _resolve_device(name: str) -> torch.device:
@@ -83,6 +86,61 @@ def _resolve_device(name: str) -> torch.device:
     if name in ("cpu", "cuda", "npu"):
         return torch.device(name)
     raise ValueError(f"Unknown --device: {name} (expected auto|cpu|cuda|npu)")
+
+
+def _parse_seeds(seed: int, seeds_raw: str) -> list[int]:
+    raw = str(seeds_raw or "").strip()
+    if not raw:
+        return [int(seed)]
+    out: list[int] = []
+    seen: set[int] = set()
+    for part in raw.split(","):
+        p = part.strip()
+        if not p:
+            continue
+        s = int(p)
+        if s in seen:
+            continue
+        out.append(s)
+        seen.add(s)
+    if not out:
+        raise ValueError("--seeds was provided but no valid integers were parsed.")
+    return out
+
+
+def _summarize_metrics(per_seed: list[dict[str, float]]) -> dict[str, dict[str, float]]:
+    if not per_seed:
+        raise ValueError("per_seed must contain at least one metrics row.")
+    metric_keys = ("loss_total", "loss_tok", "loss_pi", "loss_lam")
+    out: dict[str, dict[str, float]] = {}
+    for key in metric_keys:
+        vals = [float(row[key]) for row in per_seed]
+        n = len(vals)
+        mean = sum(vals) / float(n)
+        if n > 1:
+            var = sum((x - mean) ** 2 for x in vals) / float(n - 1)
+            std = math.sqrt(max(var, 0.0))
+            sem = std / math.sqrt(float(n))
+            ci95 = 1.96 * sem
+        else:
+            std = 0.0
+            sem = 0.0
+            ci95 = 0.0
+        svals = sorted(vals)
+        p50 = svals[n // 2] if n % 2 == 1 else 0.5 * (svals[n // 2 - 1] + svals[n // 2])
+        p95_idx = max(0, min(n - 1, math.ceil(0.95 * n) - 1))
+        out[key] = {
+            "mean": mean,
+            "std": std,
+            "sem": sem,
+            "ci95": ci95,
+            "min": svals[0],
+            "p50": p50,
+            "p95": svals[p95_idx],
+            "max": svals[-1],
+            "n": int(n),
+        }
+    return out
 
 
 @torch.no_grad()
@@ -252,43 +310,96 @@ def main():
     scheduler_cls = str(resolved_eval["scheduler_cls"])
     tau_text_max = float(resolved_eval["tau_text_max"])
     condition_text_on_time = bool(resolved_eval["condition_text_on_time"])
-    trained_metrics = _eval_model(
-        model=trained,
-        tokenizer=tokenizer,
-        train_ds=train,
-        device=device,
-        scheduler_cls=scheduler_cls,
-        batch_size=int(args.batch_size),
-        num_batches=int(args.num_batches),
-        seed=int(args.seed),
-        condition_text_on_time=condition_text_on_time,
-        tau_text_max=tau_text_max,
-    )
+    seeds = _parse_seeds(int(args.seed), args.seeds)
 
-    print("\n=== Eq7 loss (trained) ===")
-    print(json.dumps(trained_metrics, indent=2))
-
-    if bool(args.compare_random):
-        cfg_path = os.path.join(args.model_dir, "oneflow_config.json")
-        if not os.path.exists(cfg_path):
-            raise FileNotFoundError(f"Missing oneflow_config.json in model_dir: {cfg_path}")
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg = OneFlowConfig(**json.load(f))
-        rand_model = OneFlowModel(cfg)
-        rand_metrics = _eval_model(
-            model=rand_model,
+    trained_per_seed: list[dict[str, float]] = []
+    for s in seeds:
+        metrics = _eval_model(
+            model=trained,
             tokenizer=tokenizer,
             train_ds=train,
             device=device,
             scheduler_cls=scheduler_cls,
             batch_size=int(args.batch_size),
             num_batches=int(args.num_batches),
-            seed=int(args.seed),  # same noising RNG indices
+            seed=int(s),
             condition_text_on_time=condition_text_on_time,
             tau_text_max=tau_text_max,
         )
-        print("\n=== Eq7 loss (random init) ===")
-        print(json.dumps(rand_metrics, indent=2))
+        trained_per_seed.append({"seed": int(s), **metrics})
+    trained_agg = _summarize_metrics(trained_per_seed)
+
+    if len(seeds) == 1:
+        single = {k: float(v) for k, v in trained_per_seed[0].items() if k != "seed"}
+        print("\n=== Eq7 loss (trained) ===")
+        print(json.dumps(single, indent=2))
+    else:
+        print("\n=== Eq7 loss (trained, aggregate over seeds) ===")
+        print(json.dumps(trained_agg, indent=2))
+
+    random_per_seed: list[dict[str, float]] = []
+    if bool(args.compare_random):
+        cfg_path = os.path.join(args.model_dir, "oneflow_config.json")
+        if not os.path.exists(cfg_path):
+            raise FileNotFoundError(f"Missing oneflow_config.json in model_dir: {cfg_path}")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = OneFlowConfig(**json.load(f))
+        for s in seeds:
+            rand_model = OneFlowModel(cfg)
+            rand_metrics = _eval_model(
+                model=rand_model,
+                tokenizer=tokenizer,
+                train_ds=train,
+                device=device,
+                scheduler_cls=scheduler_cls,
+                batch_size=int(args.batch_size),
+                num_batches=int(args.num_batches),
+                seed=int(s),  # same noising RNG indices per seed
+                condition_text_on_time=condition_text_on_time,
+                tau_text_max=tau_text_max,
+            )
+            random_per_seed.append({"seed": int(s), **rand_metrics})
+
+        random_agg = _summarize_metrics(random_per_seed)
+        if len(seeds) == 1:
+            single = {k: float(v) for k, v in random_per_seed[0].items() if k != "seed"}
+            print("\n=== Eq7 loss (random init) ===")
+            print(json.dumps(single, indent=2))
+        else:
+            print("\n=== Eq7 loss (random init, aggregate over seeds) ===")
+            print(json.dumps(random_agg, indent=2))
+
+    report = {
+        "model_dir": args.model_dir,
+        "dataset_dir": args.dataset_dir,
+        "tokenizer_dir": tokenizer_dir,
+        "device": str(device),
+        "batch_size": int(args.batch_size),
+        "num_batches": int(args.num_batches),
+        "seeds": [int(x) for x in seeds],
+        "runtime": {
+            "scheduler_cls": scheduler_cls,
+            "tau_text_max": tau_text_max,
+            "condition_text_on_time": condition_text_on_time,
+        },
+        "trained": {
+            "per_seed": trained_per_seed,
+            "aggregate": trained_agg,
+        },
+    }
+    if bool(args.compare_random):
+        report["random"] = {
+            "per_seed": random_per_seed,
+            "aggregate": _summarize_metrics(random_per_seed),
+        }
+    if args.output_json:
+        out_path = os.path.abspath(args.output_json)
+        out_dir = os.path.dirname(out_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"\n[INFO] wrote report: {out_path}")
 
 
 if __name__ == "__main__":

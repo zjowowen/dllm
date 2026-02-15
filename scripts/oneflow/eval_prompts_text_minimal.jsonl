@@ -1,0 +1,5 @@
+{"id":"gen_001","category":"general","prompt":"Continue this paragraph in natural English: OneFlow is a generative model that can edit and insert tokens over time."}
+{"id":"fact_001","category":"fact","prompt":"The capital of France is","expected_contains":["Paris"]}
+{"id":"fact_002","category":"fact","prompt":"The largest planet in our solar system is","expected_contains":["Jupiter"]}
+{"id":"code_001","category":"code","prompt":"Write a Python function that returns the factorial of n.","expected_contains":["def","return"]}
+{"id":"code_002","category":"code","prompt":"Complete the Python code:\\nfor i in range(5):\\n    ","expected_contains":["print"]}

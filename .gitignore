@@ -143,6 +143,8 @@ dmypy.json
 fusion_result.json
 
 *.sh
+!scripts/oneflow/launch_pt_text_h200.sh
+!scripts/oneflow/launch_sft_text_h200.sh
 reference/
 SUGGESTIONS.md
 kernel_meta/

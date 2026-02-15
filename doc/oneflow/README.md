@@ -7,6 +7,7 @@
 - 过拟合/排障手册：`doc/oneflow/validation/oneflow_overfit_debug_zh.md`
 - 数据准备 → NPU 训练流程：`doc/oneflow/guides/oneflow_data_prep_and_train_npu_zh.md`
 - 文本训练计划（PT → SFT）：`doc/oneflow/guides/oneflow_text_training_plan_npu_zh.md`
+- H200 离线执行手册（PT + 伪 SFT + 评测）：`doc/oneflow/guides/oneflow_h200_offline_pt_pseudo_sft_zh.md`
 - 分支进度与下一步：`doc/oneflow/PROGRESS.md`
 
 ## 设计与论文基准
@@ -17,4 +18,5 @@
 
 ## 工程计划
 - EditFlow/OneFlow 工具复用与 prompt_len 语义：`doc/oneflow/engineering/oneflow_editflow_utils_reuse_plan_zh.md`
+- H200 实时进展日志：`doc/oneflow/engineering/oneflow_h200_progress_log.md`
 

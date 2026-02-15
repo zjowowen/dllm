@@ -9,6 +9,19 @@
 - **数据准备与离线训练流程具备**：HF→img2dataset→latents→NPU 训练链路脚本已整理。
 - **分阶段验证路线已定义**：Stage 0–5 归零式验证与 Debug Gate A/B/C 已形成可执行清单。
 
+## H200 离线 PT+伪 SFT 框架（2026-02-11）
+- 已新增 fineweb 本地路径只读校验脚本：`scripts/oneflow/check_fineweb_local_readiness.py`
+- 已新增 H200 PT 启动脚本（离线 + wandb offline + tensorboard）：`scripts/oneflow/launch_pt_text_h200.sh`
+- 已新增 PT→伪 SFT 数据构建脚本：`scripts/oneflow/build_pseudo_sft_from_pt.py`
+- 已新增 H200 伪 SFT 启动脚本：`scripts/oneflow/launch_sft_text_h200.sh`
+- 已新增批量 prompt 评测脚本与模板集：`scripts/oneflow/eval_text_only_prompts.py`、`scripts/oneflow/eval_prompts_text_minimal.jsonl`
+- 已增强模型规模切换能力：`run_pt_fineweb_edu.sh` / `run_sft_fineweb_edu.sh` 支持 `MODEL_SIZE_PRESET`（`0p6b/0p9b/1p1b/1p3b/custom`），并向 `launch_*` 透传 `dim/depth/heads/dim_head/dim_latent`
+- 已增强稳定评测能力：`scripts/oneflow/eval_text_only_loss.py` 支持 `--seeds` 多 seed 聚合与 `--output_json`
+- 已新增 PT checkpoint 自动选点脚本：`scripts/oneflow/eval_text_only_checkpoint_sweep.py`（支持 `hybrid/loss_tok/loss_total/prompt_first` 排序）
+- 已新增 H200 执行手册与实时进展日志：
+  - `doc/oneflow/guides/oneflow_h200_offline_pt_pseudo_sft_zh.md`
+  - `doc/oneflow/engineering/oneflow_h200_progress_log.md`
+
 ## 仍需验证或推进的里程碑
 验收标准来自设计文档的里程碑定义：
 - **text-only toy**：插入式生成可增长序列。
@@ -52,6 +65,8 @@
 - 归零式验证：`doc/oneflow/validation/oneflow_zero_validation_zh.md`
 - 过拟合排障：`doc/oneflow/validation/oneflow_overfit_debug_zh.md`
 - 训练计划：`doc/oneflow/guides/oneflow_text_training_plan_npu_zh.md`
+- H200 执行手册：`doc/oneflow/guides/oneflow_h200_offline_pt_pseudo_sft_zh.md`
 - EditFlow 对比分析：`doc/oneflow/engineering/oneflow_editflow_textonly_comparison_zh.md`
 - EditFlow 对齐实验记录：`doc/oneflow/engineering/editflow_alignment_experiments_log.md`
+- H200 实时进展日志：`doc/oneflow/engineering/oneflow_h200_progress_log.md`
 
