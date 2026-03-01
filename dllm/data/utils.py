@@ -146,7 +146,7 @@ def load_pt_dataset(
       - "OpenCoder-LLM/opc-fineweb-code-corpus"
       - "OpenCoder-LLM/opc-fineweb-math-corpus"
       - "OpenCoder-LLM/opc-annealing-corpus[lang:python]"
-      - "wikitext[name:wikitext-103-v1}]"
+      - "wikitext[name:wikitext-103-v1]"
     """
     from dllm.data.opc import load_dataset_opc_annealing
 
@@ -186,9 +186,7 @@ def load_pt_dataset(
     # ---------- Streaming path ----------
     def _load_one_streaming_spec(raw: str) -> IterableDatasetDict:
         base, kvs, _ = _load_base_dataset(raw, streaming=True)
-        ds = _ensure_iterabledatasetdict(base)
-        ds = _truncate_iterabledatasetdict(base, kvs)
-        return ds
+        return _truncate_iterabledatasetdict(_ensure_iterabledatasetdict(base), kvs)
 
     # ---------- Non-streaming path (mirror load_sft_dataset; NO shuffle) ----------
     def _load_one_nonstreaming_spec(raw: str) -> DatasetDict:
@@ -479,11 +477,5 @@ def _merge_iterabledatasetdicts(
     return IterableDatasetDict(out)
 
 
-def _truncate_stream(ds: IterableDataset, n: int | None) -> IterableDataset:
-    if n is None:
-        return ds
-    return ds.take(n)
-
-
 if __name__ == "__main__":
-    breakpoint()
+    pass

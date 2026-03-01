@@ -14,7 +14,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 ```shell
 PYTHONPATH=. accelerate launch --config_file scripts/accelerate_configs/ddp.yaml --num_processes 1 \
     examples/editflow/bert/pt.py \
-    --model_name_or_path "models/editflow/ModernBERT-large" \
+    --model_name_or_path ".models/editflow/ModernBERT-large" \
     --dataset_args "Trelis/tiny-shakespeare" \
     --text_field "Text" \
     --insert_eos False \
@@ -24,13 +24,13 @@ PYTHONPATH=. accelerate launch --config_file scripts/accelerate_configs/ddp.yaml
     --per_device_train_batch_size 64 \
     --per_device_eval_batch_size 64 \
     --x0_sampler "masks[length:64]" \
-    --output_dir "models/editflow/ModernBERT-large/tiny-shakespeare"
+    --output_dir ".models/editflow/ModernBERT-large/tiny-shakespeare"
 ```
 
 To run inference with the model:
 ```shell
 PYTHONPATH=. python examples/editflow/sample.py \
-    --model_name_or_path "models/editflow/ModernBERT-large/tiny-shakespeare/checkpoint-final" \
+    --model_name_or_path ".models/editflow/ModernBERT-large/tiny-shakespeare/checkpoint-final" \
     --tau 0.01 --mask_length 64 --seed 42 --make_gif
 
 # see `decode_trace.gif`
@@ -42,7 +42,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 ```shell
 PYTHONPATH=. accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/editflow/bert/sft.py \
-    --model_name_or_path "models/editflow/ModernBERT-large" \
+    --model_name_or_path ".models/editflow/ModernBERT-large" \
     --dataset_args "tatsu-lab/alpaca" \
     --max_length 512 \
     --num_train_epochs 10 \
@@ -50,13 +50,13 @@ PYTHONPATH=. accelerate launch --config_file scripts/accelerate_configs/zero2.ya
     --per_device_train_batch_size 64 \
     --per_device_eval_batch_size 64 \
     --x0_sampler "masks[length:64]" \
-    --output_dir "models/editflow/ModernBERT-large/alpaca"
+    --output_dir ".models/editflow/ModernBERT-large/alpaca"
 ```
 
 To run inference with the model:
 ```shell
 PYTHONPATH=. python examples/editflow/sample.py \
-    --model_name_or_path "models/editflow/ModernBERT-large/alpaca/checkpoint-final" \
+    --model_name_or_path ".models/editflow/ModernBERT-large/alpaca/checkpoint-final" \
     --prompt "Could you please write a poem for me?" --tau 0.01 --mask_length 64 --seed 42 --make_gif
 
 # see `decode_trace.gif`
@@ -73,5 +73,5 @@ accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_proc
     --per_device_eval_batch_size 48 \
     --save_steps 0.1 \
     --x0_sampler "masks[length:64]" \
-    --output_dir "models/editflow/ModernBERT-large/tulu-3-smoltalk/epochs-10-bs-384-len-1024"
+    --output_dir ".models/editflow/ModernBERT-large/tulu-3-smoltalk/epochs-10-bs-384-len-1024"
 ``` -->

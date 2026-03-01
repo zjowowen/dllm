@@ -40,4 +40,3 @@ if __name__ == "__main__":
         "simplescaling/s1K", "BASE_DATASETS_DIR"
     )
     dataset = load_dataset_s1k(dataset_name_or_path)
-    breakpoint()

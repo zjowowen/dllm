@@ -36,8 +36,7 @@ def resolve_with_base_env(path: str, env_name: str) -> str:
     candidate = os.path.join(base.rstrip("/"), path.lstrip("/"))
     if os.path.exists(candidate):
         return candidate
-    else:
-        raise FileNotFoundError
+    raise FileNotFoundError(f"Path not found: {candidate}")
 
 
 @contextmanager
@@ -82,7 +81,7 @@ def print_main(*args, **kwargs):
 def pprint_main(*args, **kwargs):
     """
     Print (with pprint) only from the global main process (rank 0 across all nodes).
-    Usage: print_main("Hello from main process!")
+    Usage: pprint_main("Hello from main process!")
     """
     if accelerate.PartialState().is_main_process:
         pprint.pprint(*args, **kwargs)
@@ -269,17 +268,18 @@ def get_default_logger(name):
         logger.setLevel(logging.INFO)
     else:
         logger.setLevel(logging.WARNING)
-    handler = logging.StreamHandler(sys.stdout)  # print to terminal
-    formatter = logging.Formatter(
-        fmt=(
-            "\x1b[38;5;110m[%(asctime)s "
-            "\x1b[38;5;174m%(levelname)s "
-            "\x1b[38;5;109m%(name)s"
-            "/%(lineno)d-%(processName)s\x1b[38;5;110m] "
-            "\x1b[0m%(message)s"
-        ),
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)  # print to terminal
+        formatter = logging.Formatter(
+            fmt=(
+                "\x1b[38;5;110m[%(asctime)s "
+                "\x1b[38;5;174m%(levelname)s "
+                "\x1b[38;5;109m%(name)s"
+                "/%(lineno)d-%(processName)s\x1b[38;5;110m] "
+                "\x1b[0m%(message)s"
+            ),
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
     return logger

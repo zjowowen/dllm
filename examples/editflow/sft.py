@@ -55,7 +55,7 @@ class TrainingArguments(editflow.EditFlowTrainer.EditFlowConfig):
 
 
 def sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True) -> dict:
-    # - `input_ids`` = prompt + response
+    # - `input_ids` = prompt + response
     # - `prompt_len` marks the prompt span to EXCLUDE from loss.
     #   (Remove prompt_len to train on all tokens—if so, ensure a BOS is prepended.)
     prompt_response_tokens = tokenizer.apply_chat_template(

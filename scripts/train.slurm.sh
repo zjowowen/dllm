@@ -6,8 +6,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=mllm_safety
 #SBATCH --quotatype=spot
-#SBATCH --output=./logs/%x-%j.out
-#SBATCH --err=./logs/%x-%j.err
+#SBATCH --output=./.logs/%x-%j.out
+#SBATCH --err=./.logs/%x-%j.err
 #SBATCH --requeue
 #SBATCH --time=3-00:00:00
 

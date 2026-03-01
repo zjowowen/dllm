@@ -1,3 +1,4 @@
-from . import bd3lm, mdlm
-from .bd3lm import BD3LMTrainer
-from .mdlm import MDLMTrainer
+from .bd3lm import BD3LMConfig, BD3LMTrainer
+from .mdlm import MDLMConfig, MDLMTrainer
+
+__all__ = ["BD3LMConfig", "BD3LMTrainer", "MDLMConfig", "MDLMTrainer"]

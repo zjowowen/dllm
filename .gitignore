@@ -133,7 +133,7 @@ dmypy.json
 # Others
 /.vscode/
 /tmp/
-/data/
+/.data/
 /wandb/
 /logs/
 /models*/
@@ -151,3 +151,6 @@ reference/
 SUGGESTIONS.md
 kernel_meta/
 *.temp
+/.logs/
+/.models/
+data/

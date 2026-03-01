@@ -13,7 +13,7 @@ Local users
         examples/dream/pt.py
 
 Slurm users
-# Note: run `mkdir logs` before running sbatch; and adjust
+# Note: run `mkdir .logs` before running sbatch; and adjust
 #       `partition` and `quotatype` in `scripts/train.slurm.sh` for your cluster.
 ------------
 - 24 Nodes, 192 GPUs (FSDP):
@@ -67,7 +67,7 @@ class DataArguments(dllm.utils.DataArguments):
 @dataclass
 class TrainingArguments(dllm.pipelines.dream.DreamTrainer.DreamConfig):
     output_dir: str = (
-        "models/Dream-v0-Base-7B/dclm-baseline-1.0[train:10_000_000,test:10_000]"
+        ".models/Dream-v0-Base-7B/dclm-baseline-1.0[train:10_000_000,test:10_000]"
     )
     max_steps: int = 100_000
     learning_rate: float = 1e-4

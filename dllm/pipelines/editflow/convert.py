@@ -1,15 +1,15 @@
 """
-python dllm/pipelines/editflow/convert.py --model_name_or_path "answerdotai/ModernBERT-large" --output_dir "models/editflow/ModernBERT-large"
-python dllm/pipelines/editflow/convert.py --model_name_or_path "GSAI-ML/LLaDA-8B-Base" --output_dir "models/editflow/LLaDA-8B-Base"
-python dllm/pipelines/editflow/convert.py --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct" --output_dir "models/editflow/LLaDA-8B-Instruct"
-python dllm/pipelines/editflow/convert.py --model_name_or_path "Dream-org/Dream-v0-Base-7B" --output_dir "models/editflow/Dream-v0-Base-7B"
-python dllm/pipelines/editflow/convert.py --model_name_or_path "Dream-org/Dream-v0-Instruct-7B" --output_dir "models/editflow/Dream-v0-Instruct-7B"
+python dllm/pipelines/editflow/convert.py --model_name_or_path "answerdotai/ModernBERT-large" --output_dir ".models/editflow/ModernBERT-large"
+python dllm/pipelines/editflow/convert.py --model_name_or_path "GSAI-ML/LLaDA-8B-Base" --output_dir ".models/editflow/LLaDA-8B-Base"
+python dllm/pipelines/editflow/convert.py --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct" --output_dir ".models/editflow/LLaDA-8B-Instruct"
+python dllm/pipelines/editflow/convert.py --model_name_or_path "Dream-org/Dream-v0-Base-7B" --output_dir ".models/editflow/Dream-v0-Base-7B"
+python dllm/pipelines/editflow/convert.py --model_name_or_path "Dream-org/Dream-v0-Instruct-7B" --output_dir ".models/editflow/Dream-v0-Instruct-7B"
 
-python dllm/pipelines/a2d/convert.py --model_name_or_path "Qwen/Qwen2.5-0.5B" --output_dir "models/a2d/Qwen2.5-0.5B"
-python dllm/pipelines/editflow/convert.py --model_name_or_path "models/a2d/Qwen2.5-0.5B" --output_dir "models/editflow/Qwen2.5-0.5B"
+python dllm/pipelines/a2d/convert.py --model_name_or_path "Qwen/Qwen2.5-0.5B" --output_dir ".models/a2d/Qwen2.5-0.5B"
+python dllm/pipelines/editflow/convert.py --model_name_or_path ".models/a2d/Qwen2.5-0.5B" --output_dir ".models/editflow/Qwen2.5-0.5B"
 
-python dllm/pipelines/a2d/convert.py --model_name_or_path "Qwen/Qwen3-0.6B" --output_dir "models/a2d/Qwen3-0.6B"
-python dllm/pipelines/editflow/convert.py --model_name_or_path "models/a2d/Qwen3-0.6B" --output_dir "models/editflow/Qwen3-0.6B"
+python dllm/pipelines/a2d/convert.py --model_name_or_path "Qwen/Qwen3-0.6B" --output_dir ".models/a2d/Qwen3-0.6B"
+python dllm/pipelines/editflow/convert.py --model_name_or_path ".models/a2d/Qwen3-0.6B" --output_dir ".models/editflow/Qwen3-0.6B"
 """
 
 from dataclasses import dataclass
@@ -18,7 +18,6 @@ import transformers
 import tyro
 
 import dllm
-
 
 EDITFLOW_MAP = {
     "modernbert": {
@@ -48,7 +47,7 @@ EDITFLOW_MAP = {
 class ScriptArguments:
 
     model_name_or_path: str = "answerdotai/ModernBERT-large"
-    output_dir: str = "models/editflow/ModernBERT-large"
+    output_dir: str = ".models/editflow/ModernBERT-large"
 
     def __post_init__(self):
         self.model_name_or_path = dllm.utils.resolve_with_base_env(

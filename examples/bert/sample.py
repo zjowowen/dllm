@@ -11,7 +11,7 @@ import dllm
 
 @dataclass
 class ScriptArguments:
-    model_name_or_path: str = "dllm-collection/ModernBERT-large-chat-v0.1"
+    model_name_or_path: str = "dllm-hub/ModernBERT-large-chat-v0.1"
     seed: int = 42
     visualize: bool = True
 
@@ -56,7 +56,7 @@ inputs = tokenizer.apply_chat_template(
     tokenize=True,
 )
 outputs = sampler.sample(inputs, sampler_config, return_dict=True)
-sequences = dllm.utils.decode_trim(tokenizer, outputs.sequences.tolist(), inputs)
+sequences = dllm.utils.sample_trim(tokenizer, outputs.sequences.tolist(), inputs)
 
 for iter, s in enumerate(sequences):
     print("\n" + "-" * 80)

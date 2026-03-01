@@ -6,7 +6,7 @@ Resources and examples for sampling **LLaDA2.0**.
 
 ## Files
 ```
-# pipeline modules relevant with LLaDA2
+# Pipeline modules relevant to LLaDA2
 dllm/pipelines/llada2
 ├── __init__.py                     # Package initialization
 ├── models/
@@ -14,7 +14,7 @@ dllm/pipelines/llada2
 │   └── modeling_llada2_moe.py      # LLaDA2-MoE model architecture
 └── sampler.py                      # Inference module
 
-# example entry points for inference
+# Example entry points for inference
 examples/llada2
 ├── chat.py      # Multi-turn chat demo (uses chat template)
 ├── sample.py    # Single-turn sampling demo

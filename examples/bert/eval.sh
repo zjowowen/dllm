@@ -2,7 +2,7 @@
 # ===== Mandatory for proper import and evaluation =====
 export PYTHONPATH=.:$PYTHONPATH             
 export HF_ALLOW_CODE_EVAL=1                 # Allow code evaluation
-export HF_DATASETS_TRUST_REMOTE_CODE=True   # For cmmlu dataset
+export HF_DATASETS_TRUST_REMOTE_CODE=True   # For datasets that use remote code
 
 # ===== Optional but recommended for stability and debugging =====
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1    # Enable async error handling for multi-GPU communication to avoid deadlocks
@@ -10,7 +10,7 @@ export NCCL_DEBUG=warn                      # Show NCCL warnings for better diag
 export TORCH_DISTRIBUTED_DEBUG=DETAIL       # Provide detailed logging for PyTorch distributed debugging
 
 # ===== Basic Settings =====
-model_name_or_path="dllm-collection/ModernBERT-large-chat-v0.1"
+model_name_or_path="dllm-hub/ModernBERT-large-chat-v0.1"
 num_gpu=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,9 +29,9 @@ common_args="--model bert --apply_chat_template"  # BERT model uses chat templat
 # =======================
 # BERT Chat Tasks
 # =======================
-
+# Use dllm/pipelines/bert/eval.py and --model bert
 accelerate launch --num_processes "${num_gpu}" dllm/pipelines/bert/eval.py \
-    --tasks gsm8k_bert --num_fewshot 8 ${common_args} \
+    --tasks gsm8k_bert --num_fewshot 0 ${common_args} \
     --model_args "pretrained=${model_name_or_path},max_new_tokens=256,steps=256,block_size=32"
 
 accelerate launch --num_processes "${num_gpu}" dllm/pipelines/bert/eval.py \
@@ -44,20 +44,20 @@ accelerate launch --num_processes "${num_gpu}" dllm/pipelines/bert/eval.py \
 
 accelerate launch --num_processes "${num_gpu}" dllm/pipelines/bert/eval.py \
     --tasks ceval-valid --num_fewshot 5 ${common_args} \
-    --model_args "pretrained=${model_name_or_path},mc_num=128"
+    --model_args "pretrained=${model_name_or_path},mc_num=32" --batch_size 32
 
 accelerate launch --num_processes "${num_gpu}" dllm/pipelines/bert/eval.py \
     --tasks mmlu --num_fewshot 5 ${common_args} \
-    --model_args "pretrained=${model_name_or_path},mc_num=128"
+    --model_args "pretrained=${model_name_or_path},mc_num=32" --batch_size 32
 
 accelerate launch --num_processes "${num_gpu}" dllm/pipelines/bert/eval.py \
     --tasks winogrande --num_fewshot 5 ${common_args} \
-    --model_args "pretrained=${model_name_or_path},mc_num=128"
+    --model_args "pretrained=${model_name_or_path},mc_num=32" --batch_size 32
 
 accelerate launch --num_processes "${num_gpu}" dllm/pipelines/bert/eval.py \
     --tasks hellaswag --num_fewshot 0 ${common_args} \
-    --model_args "pretrained=${model_name_or_path},mc_num=128"
+    --model_args "pretrained=${model_name_or_path},mc_num=32" --batch_size 32
 
 accelerate launch --num_processes "${num_gpu}" dllm/pipelines/bert/eval.py \
     --tasks cmmlu --num_fewshot 5 ${common_args} \
-    --model_args "pretrained=${model_name_or_path},mc_num=128"
+    --model_args "pretrained=${model_name_or_path},mc_num=32" --batch_size 32

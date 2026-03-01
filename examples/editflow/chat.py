@@ -17,7 +17,9 @@ import dllm
 
 @dataclass
 class ScriptArguments:
-    model_name_or_path: str = "models/editflow/ModernBERT-large/alpaca/checkpoint-final"
+    model_name_or_path: str = (
+        ".models/editflow/ModernBERT-large/alpaca/checkpoint-final"
+    )
     seed: int = 42
     chat_template: bool = True
     visualize: bool = True
@@ -30,7 +32,7 @@ class ScriptArguments:
 
 
 @dataclass
-class SamplerConfig(dllm.pipelines.editflow.EditFLowSamplerConfig):
+class SamplerConfig(dllm.pipelines.editflow.EditFlowSamplerConfig):
     tau: float = 0.01
     time_epsilon: float = 1e-3
     mask_length: int = 64

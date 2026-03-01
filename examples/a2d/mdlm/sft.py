@@ -12,7 +12,7 @@ Local users
         examples/a2d/mdlm/sft.py
 
 Slurm users
-# Note: run `mkdir logs` before running sbatch; and adjust
+# Note: run `mkdir .logs` before running sbatch; and adjust
 #       `partition` and `quotatype` in `scripts/train.slurm.sh` for your cluster.
 ------------
 - 1 Node, 8 GPUs (ZeRO-2):
@@ -40,7 +40,7 @@ logger = dllm.utils.get_default_logger(__name__)
 
 @dataclass
 class ModelArguments(dllm.utils.ModelArguments):
-    model_name_or_path: str = "models/a2d/Qwen3-0.6B"
+    model_name_or_path: str = ".models/a2d/Qwen3-0.6B"
 
 
 @dataclass
@@ -55,8 +55,8 @@ class DataArguments(dllm.utils.DataArguments):
 
 
 @dataclass
-class TrainingArguments(dllm.core.trainers.MDLMTrainer.MDLMConfig):
-    output_dir: str = "models/a2d/Qwen3-0.6B/mdlm/alpaca"
+class TrainingArguments(dllm.core.trainers.MDLMConfig):
+    output_dir: str = ".models/a2d/Qwen3-0.6B/mdlm/alpaca"
     group_by_length: bool = True
     learning_rate: float = 1e-4
     num_train_epochs: int = 20

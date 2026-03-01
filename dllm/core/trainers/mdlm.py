@@ -22,14 +22,15 @@ from dllm.utils.data import prepend_bos
 from .utils import NLLMetric, PPLMetric, OnEvaluateMetricsCallback
 
 
-class MDLMTrainer(transformers.Trainer):
+@dataclass
+class MDLMConfig(TrainingArguments):
+    time_epsilon: float = 1e-3
+    loss_weight_type: str = "scheduler"  # "scheduler", "uniform"
+    loss_norm_type: str = "token"  # "batch", "sequence", "token"
+    right_shift_logits: bool = False
 
-    @dataclass
-    class MDLMConfig(TrainingArguments):
-        time_epsilon: float = 1e-3
-        loss_weight_type: str = "scheduler"  # "scheduler", "uniform"
-        loss_norm_type: str = "token"  # "batch", "sequence", "token"
-        right_shift_logits: bool = False
+
+class MDLMTrainer(transformers.Trainer):
 
     def __init__(
         self,

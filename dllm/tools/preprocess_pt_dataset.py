@@ -20,7 +20,9 @@ class ScriptArguments:
 
     model_name_or_path: str = "answerdotai/ModernBERT-large"
     dataset_args: str = "OpenCoder-LLM/opc-annealing-corpus[lang:python]"  # required
-    output_dir: str = "data/pt/modernbert/opc-annealing-corpus[lang:python]"  # required
+    output_dir: str = (
+        ".data/pt/modernbert/opc-annealing-corpus[lang:python]"  # required
+    )
     text_field: str = "text"
     max_length: int = 1024
     insert_eos: bool = True

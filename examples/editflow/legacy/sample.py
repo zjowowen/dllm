@@ -12,7 +12,7 @@ What changed vs. your original:
     * If any deletions happened in the step, the title shows ⌫N (red)
 """
 
-# srun -p $PARTITION --quotatype=$QUOTATYPE --gres=gpu:1 --time=03:00:000 python examples/editflow/sample.py --model_name_or_path "models/EditFlow-Dream-Instruct-7B/tulu-3-sft-mixture/checkpoint-final"  --tau 0.02 --mask_length 128 --seed 7070  --prompt "write a romantic story" --make_gif
+# srun -p $PARTITION --quotatype=$QUOTATYPE --gres=gpu:1 --time=03:00:000 python examples/editflow/sample.py --model_name_or_path ".models/EditFlow-Dream-Instruct-7B/tulu-3-sft-mixture/checkpoint-final"  --tau 0.02 --mask_length 128 --seed 7070  --prompt "write a romantic story" --make_gif
 
 import math
 from dataclasses import dataclass

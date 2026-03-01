@@ -128,7 +128,7 @@ def single_turn_sampling(sampler, sampler_config, visualize: bool):
 
         inputs = tokenizer([user_text], add_special_tokens=False)["input_ids"]
         outputs = sampler.sample(inputs, sampler_config, return_dict=True)
-        text = dllm.utils.decode_trim(tokenizer, outputs.sequences.tolist(), inputs)[0]
+        text = dllm.utils.sample_trim(tokenizer, outputs.sequences.tolist(), inputs)[0]
 
         print(banner_line("Output"))
         print_wrapped(text if text else "<empty>")
@@ -160,7 +160,7 @@ def multi_turn_chat(sampler, sampler_config, visualize: bool):
         inputs = build_chat_inputs(tokenizer, [messages], add_generation_prompt=True)
 
         outputs = sampler.sample(inputs, sampler_config, return_dict=True)
-        reply = dllm.utils.decode_trim(tokenizer, outputs.sequences.tolist(), inputs)[0]
+        reply = dllm.utils.sample_trim(tokenizer, outputs.sequences.tolist(), inputs)[0]
 
         print(DIV)
         print_wrapped("[Assistant]: " + reply if reply else "<empty>")

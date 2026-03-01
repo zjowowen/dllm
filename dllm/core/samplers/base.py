@@ -8,13 +8,13 @@ from dllm.core.schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 
 
 @dataclass
-class SamplerOutput:
+class BaseSamplerOutput:
     sequences: torch.Tensor
     histories: list[torch.Tensor] | None = None
 
 
 @dataclass
-class SamplerConfig:
+class BaseSamplerConfig:
     return_dict: bool = False
 
 
@@ -32,18 +32,18 @@ class BaseSampler(ABC):
     @torch.no_grad()
     def sample(
         self,
-        prompts: list[torch.Tensor, list],
-        config: SamplerConfig | None = None,
+        prompts: list[torch.Tensor | list],
+        config: BaseSamplerConfig | None = None,
         **kwargs,
-    ) -> SamplerOutput:
+    ) -> BaseSamplerOutput:
         raise NotImplementedError
 
     @abstractmethod
     @torch.no_grad()
     def infill(
         self,
-        inputs: list[torch.Tensor, list],
-        config: SamplerConfig | None = None,
+        inputs: list[torch.Tensor | list],
+        config: BaseSamplerConfig | None = None,
         **kwargs,
-    ) -> SamplerOutput:
+    ) -> BaseSamplerOutput:
         raise NotImplementedError

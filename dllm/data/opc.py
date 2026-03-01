@@ -129,16 +129,3 @@ if __name__ == "__main__":
     # Otherwise, all configs concatenated:
     dataset_all = load_dataset_opc_sft(dataset_name_or_path, None)
     dataset_all_python = load_dataset_opc_sft(dataset_name_or_path, None, "python")
-    breakpoint()
-
-    # streaming = True
-    # dataset_name_or_path = resolve_with_base_env(
-    #     "OpenCoder-LLM/opc-annealing-corpus", "BASE_DATASETS_DIR"
-    # )
-    # # If you want a specific config:
-    # dataset_alg_all = load_dataset_opc_annealing(dataset_name_or_path, "algorithmic_corpus")
-    # dataset_alg_python = load_dataset_opc_annealing(dataset_name_or_path, "algorithmic_corpus", "python")
-    # # Otherwise, all configs concatenated:
-    # dataset_all_python = load_dataset_opc_annealing(dataset_name_or_path, None, "python")
-    # dataset_all_all = load_dataset_opc_annealing(dataset_name_or_path, None)
-    # breakpoint()

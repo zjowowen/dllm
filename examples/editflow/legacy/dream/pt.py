@@ -13,7 +13,7 @@ Local users
         examples/editflow/dream/pt.py
 
 Slurm users
-# Note: run `mkdir logs` before running sbatch; and adjust
+# Note: run `mkdir .logs` before running sbatch; and adjust
 #       `partition` and `quotatype` in `scripts/train.slurm.sh` for your cluster.
 ------------
 - 1 Node, 8 GPUs (FSDP):
@@ -36,7 +36,7 @@ from examples.editflow import pt as editflow_pt
 
 @dataclass
 class ModelArguments(editflow_pt.ModelArguments):
-    model_name_or_path: str = "models/editflow/Dream-v0-Base-7B"
+    model_name_or_path: str = ".models/editflow/Dream-v0-Base-7B"
 
 
 @dataclass
@@ -47,7 +47,7 @@ class DataArguments(editflow_pt.DataArguments):
 @dataclass
 class TrainingArguments(editflow_pt.TrainingArguments):
     output_dir: str = (
-        "models/editflow/Dream-v0-Base-7B/dclm-baseline-1.0[train:10_000_000,test:10_000]"
+        ".models/editflow/Dream-v0-Base-7B/dclm-baseline-1.0[train:10_000_000,test:10_000]"
     )
 
 

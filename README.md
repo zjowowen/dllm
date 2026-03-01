@@ -4,12 +4,23 @@
 Simple Diffusion Language Modeling
 </p>
 
+<!-- <div align="center">
+
+[![Report](https://img.shields.io/badge/arXiv-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2602.22661)
+[![Models](https://img.shields.io/badge/Hugging%20Face-yellow?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/dllm-hub)
+
+</div> -->
+
+<p align="center">
+    📃 <a href="https://arxiv.org/pdf/2602.22661" target="_blank">Report</a> | 🤗 <a href="https://huggingface.co/dllm-hub" target="_blank">Models</a>
+</p>
+
+
 <p align="center">
 <img
   src="assets/logo.gif"
   alt="dLLM logo">
 </p>
-
 
 ## Overview
 **dLLM** is a library that unifies the training and evaluation of **diffusion language models**, bringing transparency and reproducibility to the entire development pipeline:
@@ -18,16 +29,21 @@ Simple Diffusion Language Modeling
 
 - dLLM provides unified evaluation pipelines (based on [`lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness)) that abstracts away inference details and making customization simple.
 
-- Built on these components, dLLM provides the minimal **pretraining / finetuning / evaluation** recipes for open-weight models (e.g., [LLaDA](https://arxiv.org/abs/2502.09992) and [Dream](https://arxiv.org/abs/2508.15487)), and implementations of training algorithms (e.g., [MDLM](https://arxiv.org/abs/2406.07524) (masked diffusion), [BD3LM](https://arxiv.org/abs/2503.09573) (block diffusion), [Edit Flows](https://arxiv.org/abs/2506.09018) and so on).
+- Built on these components, dLLM provides the minimal **training / inference / evaluation** recipes for open-weight models (e.g., [LLaDA](https://arxiv.org/abs/2502.09992) and [Dream](https://arxiv.org/abs/2508.15487)), and implementations of training algorithms (e.g., [MDLM](https://arxiv.org/abs/2406.07524) (masked diffusion), [BD3LM](https://arxiv.org/abs/2503.09573) (block diffusion), [Edit Flows](https://arxiv.org/abs/2506.09018) and so on).
 
 <!-- > [!NOTE]
 > This repository is primarily for educational purposes and does not aim for 100% exact reproduction of official models (which is impossible). We hope it serves as a helpful reference for the community — contributions and improvements are always welcome! -->
 
 
 ## News
-**[2025/12] 🤗[`Tiny-A2D`](https://huggingface.co/collections/dllm-collection/tiny-a2d)**: We released a collection of **SOTA** small (0.5B/0.6B) diffusion models adapted from AR models, with fully open recipes for converting **ANY** AR model (e.g., Qwen, LLaMA, and GPT-2) into a diffusion model. See [`examples/a2d`](/examples/a2d) for training / inference / evaluation instructions.
 
-**[2025/11] 🤗[`BERT-Chat`](https://huggingface.co/collections/dllm-collection/bert-chat)**: We released a collection of BERTs finetuned to chat with diffusion, with open recipes for turning **ANY** BERT encoder (e.g., BERT, RoBERTa, ModernBERT) into a diffusion model. See [`examples/bert`](/examples/bert) for training / inference / evaluation instructions.
+<!-- **[2026/02]** 📄 Checkout our **[`technical report`](assets/dLLM.pdf)**! -->
+
+**[2026/02] ⚡[`Fast-dLLM`](https://github.com/NVlabs/Fast-dLLM)**: We support accelerated inference and evaluation of  [LLaDA](https://arxiv.org/abs/2502.09992) and [Dream](https://arxiv.org/abs/2508.15487) with [Fast-dLLM](https://arxiv.org/abs/2505.22618) (cache, confidence-threshold decoding). See [`examples/fastdllm`](/examples/fastdllm) for inference / evaluation instructions.
+
+**[2025/12] 🤗[`Tiny-A2D`](https://huggingface.co/collections/dllm-hub/tiny-a2d)**: We released a collection of **SOTA** small (0.5B/0.6B) diffusion models adapted from AR models, with fully open recipes for converting **ANY** AR model (e.g., Qwen, LLaMA, and GPT-2) into a diffusion model. See [`examples/a2d`](/examples/a2d) for training / inference / evaluation instructions.
+
+**[2025/11] 🤗[`BERT-Chat`](https://huggingface.co/collections/dllm-hub/bert-chat)**: We released a collection of BERTs finetuned to chat with diffusion, with open recipes for turning **ANY** BERT encoder (e.g., BERT, RoBERTa, ModernBERT) into a diffusion model. See [`examples/bert`](/examples/bert) for training / inference / evaluation instructions.
 
 
 ## Table of Contents
@@ -41,8 +57,8 @@ Simple Diffusion Language Modeling
 
 
 ## Features
-- [`examples/llada`](/examples/llada): Pretraining, finetuning and evaluating LLaDA [LLaDA](https://arxiv.org/abs/2502.09992) / [LLaDA-MoE](https://arxiv.org/abs/2509.24389).
-- [`examples/dream`](/examples/dream): Pretraining, finetuning and evaluating Dream [Dream](https://arxiv.org/abs/2508.15487).
+- [`examples/llada`](/examples/llada): Pretraining, finetuning and evaluating [LLaDA](https://arxiv.org/abs/2502.09992) / [LLaDA-MoE](https://arxiv.org/abs/2509.24389).
+- [`examples/dream`](/examples/dream): Pretraining, finetuning and evaluating [Dream](https://arxiv.org/abs/2508.15487).
 - [`examples/a2d`](/examples/a2d): Finetuning any autoregressive model to generate text with [masked diffusion](https://arxiv.org/abs/2406.07524) / [block diffusion](https://arxiv.org/abs/2503.09573).
 - [`examples/bert`](/examples/bert): Finetuning any [BERT](https://arxiv.org/abs/1810.04805) to be lightweight Chatbots.
     <!-- <details>
@@ -53,7 +69,7 @@ Simple Diffusion Language Modeling
     </p>
     <p align="center">
     <em>
-        Chat with <a href="https://huggingface.co/dllm-collection/ModernBERT-large-chat-v0.1"><code>ModernBERT-large-chat-v0.1</code></a>. See <a href="/examples/bert/README.md/#inference">Inference</a> for details.
+        Chat with <a href="https://huggingface.co/dllm-hub/ModernBERT-large-chat-v0.1"><code>ModernBERT-large-chat-v0.1</code></a>. See <a href="/examples/bert/README.md#inference">Inference</a> for details.
     </em>
     </p>
     </details> -->
@@ -67,6 +83,7 @@ Simple Diffusion Language Modeling
    <p align="center"><em>EditFlow performing insertion (blue), substitution from mask tokens (black), substitution from non-mask tokens (red), and deletion (strikethrough → removed) during sampling.</em></p>
 
    </details> -->
+- [`examples/fastdllm`](/examples/fastdllm): Inferencing and evaluating [LLaDA](https://arxiv.org/abs/2502.09992) and [Dream](https://arxiv.org/abs/2508.15487) with [Fast-dLLM](https://arxiv.org/abs/2505.22618) (cache, confidence-threshold decoding, and beyond).
 - More upcoming.
 
 
@@ -105,7 +122,7 @@ For [Slurm](https://slurm.schedmd.com/) users, update [`scripts/train.slurm.sh`]
 ```
 Next, create a directory for your job logs:
 ```shell
-mkdir logs
+mkdir .logs
 ```
 This folder will store the log files generated by your sbatch jobs.
 
@@ -122,6 +139,7 @@ dllm
 |   ├── bert
 │   ├── dream
 │   ├── editflow
+│   ├── fastdllm
 │   └── llada
 │       ├── models         # Model architecture and configs 
 │       ├── sampler.py     # Inference module
@@ -135,6 +153,7 @@ examples
 ├── bert
 ├── dream
 ├── editflow
+├── fastdllm
 └── llada
     ├── chat.py            # Interactive inference example
     ├── sample.py          # Inference example
@@ -221,7 +240,7 @@ See [Features](#features) for specific training recipes.
       --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
       --sft_map_fn_path "dllm.utils.default_sft_map_fn" \
       --dataset_args "allenai/tulu-3-sft-mixture" \
-      --output_dir "data/sft/llada/tulu-3-sft-mixture" \
+      --output_dir ".data/sft/llada/tulu-3-sft-mixture" \
       --num_proc 64
   
   # SFT with preprocessed data
@@ -229,7 +248,7 @@ See [Features](#features) for specific training recipes.
       --config_file scripts/accelerate_configs/fsdp.yaml \
       examples/llada/sft.py \
       --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
-      --dataset_args "data/sft/llada/tulu-3-sft-mixture" \
+      --dataset_args ".data/sft/llada/tulu-3-sft-mixture" \
       --load_preprocessed_data True \
       ...
   ``` -->
@@ -240,7 +259,7 @@ See [Features](#features) for specific training recipes.
   +     --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
   +     --sft_map_fn_path "dllm.utils.default_sft_map_fn" \
   +     --dataset_args "allenai/tulu-3-sft-mixture" \
-  +     --output_dir "data/sft/llada/tulu-3-sft-mixture" \
+  +     --output_dir ".data/sft/llada/tulu-3-sft-mixture" \
   +     --num_proc 64
   
   # SFT with preprocessed data
@@ -249,7 +268,7 @@ See [Features](#features) for specific training recipes.
       examples/llada/sft.py \
       --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
   -   --dataset_args "allenai/tulu-3-sft-mixture" \
-  +   --dataset_args "data/sft/llada/tulu-3-sft-mixture" \
+  +   --dataset_args ".data/sft/llada/tulu-3-sft-mixture" \
   +   --load_preprocessed_data True \
       ...
   ```
@@ -277,12 +296,17 @@ inputs = tokenizer.apply_chat_template(
 )
 
 outputs = sampler.sample(inputs, return_dict=True)
-sequences = dllm.utils.decode_trim(tokenizer, outputs.sequences.tolist(), inputs)
+sequences = dllm.utils.sample_trim(tokenizer, outputs.sequences.tolist(), inputs)
 ```
 
 You can also try interactive chat script (for example, [`examples/llada/chat.py`](/examples/llada/chat.py)) for visualized multi-turn dialogue:
 ```shell
 python -u examples/llada/chat.py --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct"
+```
+
+You can accelerate inference of [LLaDA](https://arxiv.org/abs/2502.09992) and [Dream](https://arxiv.org/abs/2508.15487) with [Fast-dLLM](https://arxiv.org/abs/2505.22618).
+```shell
+python examples/fastdllm/llada/sample.py --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct" --use_cache prefix --threshold 0.9
 ```
 
 <p align="center">
@@ -291,7 +315,7 @@ python -u examples/llada/chat.py --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct
 <!-- <p align="center"><em>EditFlow performing insertion (blue), substitution from mask tokens (black), substitution from non-mask tokens (red), and deletion (strikethrough → removed) during sampling.</em></p> -->
 
 ## Evaluation
-> Read [(optional) Evaluation setup](/README.md/#optional-evaluation-setup) before running evaluation. 
+> Read [(optional) Evaluation setup](/README.md#optional-evaluation-setup) before running evaluation. 
 
 For example, to evaluate [`LLaDA-8B-Instruct`](https://huggingface.co/GSAI-ML/LLaDA-8B-Instruct) on [`MMLU_Pro`](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) using 4 GPUs, run:
 ```shell
@@ -301,25 +325,32 @@ accelerate launch --num_processes 4 \
     --model "llada" \
     --apply_chat_template \
     --num_fewshot 0 \
-    --model_args "pretrained=GSAI-ML/LLaDA-8B-Instruct,is_check_greedy=False,mc_num=1,max_new_tokens=256,steps=256,block_size=256,cfg=0.0"
+    --model_args "pretrained=GSAI-ML/LLaDA-8B-Instruct,is_check_greedy=False,mc_num=1,max_new_tokens=256,steps=256,block_size=256,cfg_scale=0.0"
 ```
 
-We also provide scripts to automatically evaluate [LLaDA](https://arxiv.org/abs/2502.09992), [Dream](https://arxiv.org/abs/2508.15487), and [BERT-Chat](https://huggingface.co/collections/dllm-collection/bert-chat) on all benchmarks.
+We also provide scripts to automatically evaluate [LLaDA](https://arxiv.org/abs/2502.09992), [Dream](https://arxiv.org/abs/2508.15487), and [BERT-Chat](https://huggingface.co/collections/dllm-hub/bert-chat) on all benchmarks.
 For example, you can run [`examples/llada/eval.sh`](/examples/llada/eval.sh) directly using the following commands:
 ```shell
 bash examples/llada/eval.sh --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct" --instruct True
 bash examples/llada/eval.sh --model_name_or_path "GSAI-ML/LLaDA-8B-Base" --instruct False
 ```
 
+We provide scripts to evaluate [LLaDA](https://arxiv.org/abs/2502.09992) and [Dream](https://arxiv.org/abs/2508.15487) using [Fast-dLLM](https://arxiv.org/abs/2505.22618):
+```shell
+bash examples/fastdllm/llada/eval.sh --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct" --instruct True --num_gpu 1
+bash examples/fastdllm/dream/eval.sh --model_name_or_path "Dream-org/Dream-v0-Base-7B" --instruct False --num_gpu 1
+```
+
 
 ## Citation
 ```
-@misc{dllm,
-    author = {Zhanhui Zhou and Lingjie Chen and Hanghang Tong and Dawn Song},
-    title = {dLLM: Simple Diffusion Language Modeling},
-    year = {2025},
-    publisher = {GitHub},
-    journal = {GitHub repository},
-    howpublished = {\url{https://github.com/ZHZisZZ/dllm}},
+@misc{zhou2026dllm,
+      title={dLLM: Simple Diffusion Language Modeling}, 
+      author={Zhanhui Zhou and Lingjie Chen and Hanghang Tong and Dawn Song},
+      year={2026},
+      eprint={2602.22661},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2602.22661}, 
 }
 ```

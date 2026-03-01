@@ -11,7 +11,9 @@ import dllm
 
 @dataclass
 class ScriptArguments:
-    model_name_or_path: str = "models/editflow/ModernBERT-large/alpaca/checkpoint-final"
+    model_name_or_path: str = (
+        ".models/editflow/ModernBERT-large/alpaca/checkpoint-final"
+    )
     seed: int = 42
     visualize: bool = True
 
@@ -22,7 +24,7 @@ class ScriptArguments:
 
 
 @dataclass
-class SamplerConfig(dllm.pipelines.editflow.EditFLowSamplerConfig):
+class SamplerConfig(dllm.pipelines.editflow.EditFlowSamplerConfig):
     tau: float = 0.01
     time_epsilon: float = 1e-3
     mask_length: int = 64
@@ -55,7 +57,7 @@ inputs = tokenizer.apply_chat_template(
     tokenize=True,
 )
 outputs = sampler.sample(inputs, sampler_config, return_dict=True)
-sequences = dllm.utils.decode_trim(tokenizer, outputs.sequences.tolist(), inputs)
+sequences = dllm.utils.sample_trim(tokenizer, outputs.sequences.tolist(), inputs)
 
 for iter, s in enumerate(sequences):
     print("\n" + "-" * 80)

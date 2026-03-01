@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from importlib import import_module
 from typing import Any
+from . import a2d, bert, dream, editflow, fastdllm, llada, llada2
 
 __all__ = [
     # pipelines (subpackages)
@@ -16,6 +17,7 @@ __all__ = [
     "bert",
     "dream",
     "editflow",
+    "fastdllm",
     "llada",
     "llada2",
     "oneflow",

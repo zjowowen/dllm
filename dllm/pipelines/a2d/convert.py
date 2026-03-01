@@ -15,7 +15,7 @@ A2D_CONFIG_MAP = {
 @dataclass
 class ScriptArguments:
     model_name_or_path: str = "Qwen/Qwen2.5-0.5B"
-    output_dir: str = "models/a2d/Qwen2.5-0.5B"
+    output_dir: str = ".models/a2d/Qwen2.5-0.5B"
     random_init: bool = False
 
     def __post_init__(self):

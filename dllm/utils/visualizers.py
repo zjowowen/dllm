@@ -18,7 +18,7 @@ class BaseVisualizer(ABC):
     tokenizer: PreTrainedTokenizer
 
     @abstractmethod
-    def visualize(self, history: list[torch.Tensor, list], **kwargs):
+    def visualize(self, history: list[torch.Tensor | list], **kwargs):
         raise NotImplementedError
 
 
@@ -27,7 +27,7 @@ class VideoVisualizer(BaseVisualizer):
 
     def visualize(
         self,
-        history: list[torch.Tensor, list],
+        history: list[torch.Tensor | list],
         output_path: str = "visualization.gif",
         **kwargs,
     ):

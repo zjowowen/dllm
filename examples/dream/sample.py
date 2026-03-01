@@ -59,7 +59,7 @@ inputs = tokenizer.apply_chat_template(
 )
 
 outputs = sampler.sample(inputs, sampler_config, return_dict=True)
-sequences = dllm.utils.decode_trim(tokenizer, outputs.sequences.tolist(), inputs)
+sequences = dllm.utils.sample_trim(tokenizer, outputs.sequences.tolist(), inputs)
 
 for iter, s in enumerate(sequences):
     print("\n" + "-" * 80)
@@ -100,14 +100,17 @@ inputs = tokenizer.apply_chat_template(
 )
 
 outputs = sampler.infill(inputs, sampler_config, return_dict=True)
-sequences = dllm.utils.decode_trim(tokenizer, outputs.sequences.tolist(), inputs)
+sequences = dllm.utils.infill_trim(tokenizer, outputs.sequences.tolist(), inputs)
 
 for iter, (i, s) in enumerate(zip(inputs, sequences)):
     print("\n" + "-" * 80)
     print(f"[Case {iter}]")
     print("-" * 80)
     print("[Masked]:\n" + tokenizer.decode(i))
-    print("\n[Filled]:\n" + (s.strip() if s.strip() else "<empty>"))
+    print("-" * 80)
+    print("[Filled]:\n" + (s.strip() if s.strip() else "<empty>"))
+    print("-" * 80)
+    print("[Full]:\n" + tokenizer.decode(outputs.sequences.tolist()[iter]))
 print("\n" + "=" * 80 + "\n")
 
 if script_args.visualize:

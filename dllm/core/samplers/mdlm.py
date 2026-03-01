@@ -9,12 +9,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from dllm.core.samplers.base import BaseSampler, SamplerConfig, SamplerOutput
+from dllm.core.samplers.base import BaseSampler, BaseSamplerConfig, BaseSamplerOutput
 from dllm.core.samplers.utils import add_gumbel_noise, get_num_transfer_tokens
 
 
 @dataclass
-class MDLMSamplerConfig(SamplerConfig):
+class MDLMSamplerConfig(BaseSamplerConfig):
     max_new_tokens: int = 128
     max_length: int = (
         None  # There's no explicit length_limit except for the tokenizer/model context
@@ -39,7 +39,7 @@ class MDLMSampler(BaseSampler):
         inputs: list[torch.Tensor | list],
         config: MDLMSamplerConfig | None = None,
         **kwargs,
-    ) -> SamplerOutput | torch.Tensor:
+    ) -> BaseSamplerOutput | torch.Tensor:
         """
         Generate text using masked diffusion language modeling.
 
@@ -52,7 +52,7 @@ class MDLMSampler(BaseSampler):
             **kwargs: Override specific config parameters.
 
         Returns:
-            SamplerOutput with generated sequences, or raw tensor if return_dict=False.
+            BaseSamplerOutput with generated sequences, or raw tensor if return_dict=False.
         """
         if config is None:
             config = MDLMSamplerConfig()
@@ -83,7 +83,7 @@ class MDLMSampler(BaseSampler):
         eos_id = self.tokenizer.eos_token_id
 
         # ----- Shape bookkeeping: per-sample prompt lengths and final canvas width -----
-        # If right_shift_logits is true and a sequence has length 0, replace that sequence with [eos].
+        # If right_shift_logits is true and a sequence has length 0, replace that sequence with [bos].
         if right_shift_logits:
             inputs = [
                 [bos_id] if isinstance(p, list) and len(p) == 0 else p for p in inputs
@@ -167,8 +167,8 @@ class MDLMSampler(BaseSampler):
                     un_x[unmasked_index] = mask_id
                     x_ = torch.cat([x, un_x], dim=0)
                     logits = self.model(
-                        x_, attention_mask=attention_mask
-                    ).logits  # Use attention mask here
+                        x_, attention_mask=attention_mask.repeat(2, 1)
+                    ).logits
                     logits, un_logits = torch.chunk(logits, 2, dim=0)
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
                 else:
@@ -235,12 +235,12 @@ class MDLMSampler(BaseSampler):
         if not return_dict:
             return x
         else:
-            return SamplerOutput(sequences=x, histories=histories)
+            return BaseSamplerOutput(sequences=x, histories=histories)
 
     @torch.no_grad()
     def infill(
         self, inputs: list[torch.Tensor | list], config, **kwargs
-    ) -> SamplerOutput | torch.Tensor:
+    ) -> BaseSamplerOutput | torch.Tensor:
         """
         Fill in-place the <|mdm_mask|> tokens contained in `inputs`.
         The whole (padded) sequence is split into block windows of length
@@ -275,7 +275,7 @@ class MDLMSampler(BaseSampler):
         eos_id = self.tokenizer.eos_token_id
 
         # ----- Build canvas: right-pad with EOS to the max length in the batch -----
-        # If right_shift_logits is true and a sequence has length 0, replace that sequence with [eos].
+        # If right_shift_logits is true and a sequence has length 0, replace that sequence with [bos].
         if right_shift_logits:
             inputs = [
                 [bos_id] if isinstance(p, list) and len(p) == 0 else p for p in inputs
@@ -358,8 +358,8 @@ class MDLMSampler(BaseSampler):
                     un_x[unmasked_index] = mask_id
                     x_ = torch.cat([x, un_x], dim=0)
                     logits = self.model(
-                        x_, attention_mask=attention_mask
-                    ).logits  # Use attention mask here
+                        x_, attention_mask=attention_mask.repeat(2, 1)
+                    ).logits
                     logits, un_logits = torch.chunk(logits, 2, dim=0)
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
                 else:
@@ -421,4 +421,4 @@ class MDLMSampler(BaseSampler):
         if not return_dict:
             return x
         else:
-            return SamplerOutput(sequences=x, histories=histories)
+            return BaseSamplerOutput(sequences=x, histories=histories)

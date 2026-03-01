@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from importlib import import_module
 from typing import Any
+from . import eval, samplers, schedulers, trainers
 
-__all__ = ["samplers", "schedulers", "trainers"]
+__all__ = ["eval", "samplers", "schedulers", "trainers"]
 
 
 def __getattr__(name: str) -> Any:  # pragma: no cover

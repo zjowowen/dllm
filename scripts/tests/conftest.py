@@ -1,4 +1,11 @@
 import os
+import sys
+
+# Add scripts/tests to path so that "attention" is a top-level package
+# when test files use: from .common import ...
+_tests_dir = os.path.dirname(os.path.abspath(__file__))
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
 
 # Many CPU-only environments have `torch_npu` installed but missing its runtime libs.
 # Disable backend auto-loading unless NPU tests are explicitly requested.

@@ -13,7 +13,7 @@ Local users
         examples/llada/sft.py
 
 Slurm users
-# Note: run `mkdir logs` before running sbatch; and adjust
+# Note: run `mkdir .logs` before running sbatch; and adjust
 #       `partition` and `quotatype` in `scripts/train.slurm.sh` for your cluster.
 ------------
 - 1 Node, 8 GPUs (FSDP):
@@ -55,8 +55,8 @@ class DataArguments(dllm.utils.DataArguments):
 
 
 @dataclass
-class TrainingArguments(dllm.core.trainers.MDLMTrainer.MDLMConfig):
-    output_dir: str = "models/LLaDA-8B-Base/tulu-3-sft-mixture[train:10000,test:1000]"
+class TrainingArguments(dllm.core.trainers.MDLMConfig):
+    output_dir: str = ".models/LLaDA-8B-Base/tulu-3-sft-mixture[train:10000,test:1000]"
     group_by_length: bool = True
     num_train_epochs: float = 5
     learning_rate: float = 2e-5

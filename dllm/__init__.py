@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from importlib import import_module
 from typing import Any
+from . import core, data, pipelines, utils
 
 __all__ = ["core", "data", "pipelines", "utils"]
 

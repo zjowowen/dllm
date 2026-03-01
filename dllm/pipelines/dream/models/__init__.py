@@ -1,6 +1,8 @@
 from .configuration_dream import DreamConfig
 from .modeling_dream import DreamModel
 
+__all__ = ["DreamConfig", "DreamModel"]
+
 # Register with HuggingFace Auto classes for local usage
 try:
     from transformers import AutoConfig, AutoModel, AutoModelForMaskedLM

@@ -12,7 +12,7 @@ Local users
         examples/bert/sft.py
 
 Slurm users
-# Note: run `mkdir logs` before running sbatch; and adjust
+# Note: run `mkdir .logs` before running sbatch; and adjust
 #       `partition` and `quotatype` in `scripts/train.slurm.sh` for your cluster.
 ------------
 - 1 Node, 8 GPUs (ZeRO-2):
@@ -55,8 +55,8 @@ class DataArguments(dllm.utils.DataArguments):
 
 
 @dataclass
-class TrainingArguments(dllm.core.trainers.MDLMTrainer.MDLMConfig):
-    output_dir: str = "models/ModernBERT-large/alpaca"
+class TrainingArguments(dllm.core.trainers.MDLMConfig):
+    output_dir: str = ".models/ModernBERT-large/alpaca"
     group_by_length: bool = True
     num_train_epochs: int = 20
     learning_rate: float = 1e-4

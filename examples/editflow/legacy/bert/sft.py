@@ -13,7 +13,7 @@ Local users
         examples/editflow/bert/sft.py
 
 Slurm users
-# Note: run `mkdir logs` before running sbatch; and adjust
+# Note: run `mkdir .logs` before running sbatch; and adjust
 #       `partition` and `quotatype` in `scripts/train.slurm.sh` for your cluster.
 ------------
 - 1 Node, 8 GPUs (FSDP):
@@ -36,7 +36,7 @@ from examples.editflow import sft as editflow_sft
 
 @dataclass
 class ModelArguments(editflow_sft.ModelArguments):
-    model_name_or_path: str = "models/editflow/ModernBERT-large"
+    model_name_or_path: str = ".models/editflow/ModernBERT-large"
 
 
 @dataclass
@@ -46,7 +46,7 @@ class DataArguments(editflow_sft.DataArguments):
 
 @dataclass
 class TrainingArguments(editflow_sft.TrainingArguments):
-    output_dir: str = "models/editflow/ModernBERT-large/alpaca"
+    output_dir: str = ".models/editflow/ModernBERT-large/alpaca"
     per_device_train_batch_size: int = 16
     per_device_eval_batch_size: int = 16
 

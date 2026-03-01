@@ -56,12 +56,13 @@ class BaseMetricsCallback(transformers.TrainerCallback):
 
     @torch.no_grad()
     def finalize(self, split: str) -> dict[str, float]:
+        """Compute metrics and reset. Must be called on all ranks so sync aggregates over all ranks."""
         mc = self._m[split]
         mc.to(self.accelerator.device)
 
-        computed = (
-            mc.compute()
-        )  # torchmetrics will sync here if metric is configured to do so
+        # Metrics with sync_on_compute=True (e.g. NLLMetric/PPLMetric) sync state across
+        # ranks in compute(), so the returned value is the same on every rank.
+        computed = mc.compute()
         mc.reset()
 
         return {

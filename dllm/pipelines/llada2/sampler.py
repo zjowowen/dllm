@@ -12,7 +12,7 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 
-from dllm.core.samplers.base import BaseSampler, SamplerConfig, SamplerOutput
+from dllm.core.samplers.base import BaseSampler, BaseSamplerConfig, BaseSamplerOutput
 
 
 def even_transfer_schedule(block_size: int, steps_per_block: int) -> torch.Tensor:
@@ -81,7 +81,7 @@ def sample_tokens(
 
 
 @dataclass
-class LLaDA2SamplerConfig(SamplerConfig):
+class LLaDA2SamplerConfig(BaseSamplerConfig):
     max_new_tokens: int = 128
     block_size: int = 32
     steps_per_block: int = 32
@@ -101,7 +101,7 @@ class LLaDA2Sampler(BaseSampler):
         inputs: list[torch.Tensor | list],
         config: LLaDA2SamplerConfig | None = None,
         **kwargs,
-    ) -> SamplerOutput | torch.Tensor:
+    ) -> BaseSamplerOutput | torch.Tensor:
         """
         Block diffusion-like sampler that mirrors `LLaDA2MoeModelLM.generate`.
         Currently supports equal-length prompts.
@@ -230,7 +230,7 @@ class LLaDA2Sampler(BaseSampler):
 
         if not return_dict:
             return x
-        return SamplerOutput(sequences=x, histories=histories)
+        return BaseSamplerOutput(sequences=x, histories=histories)
 
     @torch.no_grad()
     def infill(
@@ -238,5 +238,5 @@ class LLaDA2Sampler(BaseSampler):
         inputs: list[torch.Tensor, list],
         config: LLaDA2SamplerConfig | None = None,
         **kwargs,
-    ) -> SamplerOutput:
+    ) -> BaseSamplerOutput:
         raise NotImplementedError

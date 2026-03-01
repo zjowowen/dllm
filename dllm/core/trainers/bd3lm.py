@@ -16,7 +16,7 @@ import transformers
 
 from dllm.utils.collators import CollatorWrapper
 
-from .mdlm import MDLMTrainer
+from .mdlm import MDLMConfig, MDLMTrainer
 
 
 @dataclass
@@ -82,11 +82,12 @@ def _create_bd3lm_attention_mask(b, h, q_idx, kv_idx, block_size=None, n=None):
     return block_diagonal | offset_block_causal | block_causal
 
 
-class BD3LMTrainer(MDLMTrainer):
+@dataclass
+class BD3LMConfig(MDLMConfig):
+    block_size: int = 32
 
-    @dataclass
-    class BD3LMConfig(MDLMTrainer.MDLMConfig):
-        block_size: int = 32
+
+class BD3LMTrainer(MDLMTrainer):
 
     def __init__(
         self,
