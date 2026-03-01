@@ -1,0 +1,16 @@
+{"id":"flower_001","category":"flower","prompt":"a photo of a red rose in a garden"}
+{"id":"flower_002","category":"flower","prompt":"a sunflower field under blue sky"}
+{"id":"flower_003","category":"flower","prompt":"a close-up of a white daisy"}
+{"id":"flower_004","category":"flower","prompt":"a bouquet of colorful tulips on a table"}
+{"id":"nature_001","category":"nature","prompt":"a sunset over the ocean with orange clouds"}
+{"id":"nature_002","category":"nature","prompt":"a mountain landscape with snow on the peaks"}
+{"id":"nature_003","category":"nature","prompt":"a forest path covered in autumn leaves"}
+{"id":"nature_004","category":"nature","prompt":"a calm lake reflecting the surrounding trees"}
+{"id":"object_001","category":"object","prompt":"a red apple on a wooden table"}
+{"id":"object_002","category":"object","prompt":"a cup of coffee with steam rising"}
+{"id":"object_003","category":"object","prompt":"an open book on a desk near a window"}
+{"id":"object_004","category":"object","prompt":"a bicycle parked next to a brick wall"}
+{"id":"abstract_001","category":"abstract","prompt":"a colorful abstract painting with geometric shapes"}
+{"id":"abstract_002","category":"abstract","prompt":"swirling blue and green patterns"}
+{"id":"abstract_003","category":"abstract","prompt":"a gradient from warm orange to cool purple"}
+{"id":"abstract_004","category":"abstract","prompt":"a minimalist black and white composition"}

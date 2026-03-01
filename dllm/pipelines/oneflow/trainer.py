@@ -58,6 +58,10 @@ class OneFlowTrainer(transformers.Trainer):
         text_loss_type: str = "paper"
         # Only used for text_loss_type="ctmc" (legacy): clamp w(t)=κ'(t)/(1-κ(t)) to avoid blow-ups.
         max_w: float = 20.0
+        # When True and text_loss_type="paper", multiply the per-sample Eq.7 loss by w(t).
+        # This gives: loss = (loss_tok + loss_pi + loss_lam) * w(t).
+        # When False (default), Eq.7 loss is unweighted.
+        paper_loss_use_w: bool = False
         image_loss_weight: float = 1.0
         normalize_text_loss_by_length: bool = True
         normalize_image_loss_by_tokens: bool = True
@@ -514,10 +518,12 @@ class OneFlowTrainer(transformers.Trainer):
         # Token keep prob κ(t_text) for discrete noising (compute on CPU to avoid device sync)
         k_keep_cpu = self.scheduler.kappa(t_text_cpu).to(cpu)  # [B,1]
 
-        # Legacy CTMC-style loss uses w(t)=κ'(t)/(1-κ(t)); paper loss (Eq 7) does NOT.
+        # Legacy CTMC-style loss uses w(t)=κ'(t)/(1-κ(t)); paper loss (Eq 7) does NOT by default.
+        # When paper_loss_use_w=True, paper loss is also weighted by w(t).
         text_loss_type = str(getattr(self.args, "text_loss_type", "paper") or "paper").lower().strip()
+        paper_loss_use_w = bool(getattr(self.args, "paper_loss_use_w", False))
         w: torch.Tensor | None = None
-        if text_loss_type == "ctmc":
+        if text_loss_type == "ctmc" or paper_loss_use_w:
             w = self.scheduler.weight(t_text).squeeze(1).to(device)  # [B]
             if getattr(self.args, "max_w", None):
                 w = w.clamp(max=float(self.args.max_w))
@@ -659,6 +665,7 @@ class OneFlowTrainer(transformers.Trainer):
                     "loss_text_pos": ctmc.loss_pos,
                 }
             else:
+                paper_w = w if paper_loss_use_w else None
                 if bool(getattr(self.args, "paper_loss_from_logits", False)):
                     tl = text_loss_paper_eq7_fast_from_logits(
                         pi=pi,
@@ -669,6 +676,7 @@ class OneFlowTrainer(transformers.Trainer):
                         normalize_by_n=bool(
                             getattr(self.args, "normalize_text_loss_by_length", True)
                         ),
+                        w=paper_w,
                     )
                 else:
                     logQ = F.log_softmax(q_logits, dim=-1)
@@ -681,6 +689,7 @@ class OneFlowTrainer(transformers.Trainer):
                         normalize_by_n=bool(
                             getattr(self.args, "normalize_text_loss_by_length", True)
                         ),
+                        w=paper_w,
                     )
                 loss_text = tl.total
                 extra_metrics = {

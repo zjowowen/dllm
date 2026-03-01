@@ -1,0 +1,16 @@
+{"id":"easy_001","category":"easy","prompt":"Write one short sentence about rain.","expected_contains":["the"]}
+{"id":"easy_002","category":"easy","prompt":"Continue in English: Data pipelines can","expected_contains":["the"]}
+{"id":"easy_003","category":"easy","prompt":"List one reason to test code in production.","expected_contains":["the"]}
+{"id":"easy_004","category":"easy","prompt":"Finish this phrase: Neural networks are","expected_contains":["the"]}
+{"id":"medium_001","category":"medium","prompt":"The largest planet in our solar system is","expected_contains":["of"]}
+{"id":"medium_002","category":"medium","prompt":"Complete the Python code:\\nfor i in range(5):\\n    ","expected_contains":[","]}
+{"id":"medium_003","category":"medium","prompt":"Complete the Python code:\\nfor i in range(5):\\n    ","expected_contains":["."]}
+{"id":"medium_004","category":"medium","prompt":"Summarize model training in one sentence.","expected_contains":["and"]}
+{"id":"medium_005","category":"medium","prompt":"Explain checkpoint selection briefly.","expected_contains":["of"]}
+{"id":"medium_006","category":"medium","prompt":"Give a short note on tokenizer behavior offline.","expected_contains":["is"]}
+{"id":"hard_001","category":"hard","prompt":"The capital of France is","expected_contains":["Paris"]}
+{"id":"hard_002","category":"hard","prompt":"The largest planet in our solar system is","expected_contains":["Jupiter"]}
+{"id":"hard_003","category":"hard","prompt":"Write a Python function that returns the factorial of n.","expected_contains":["def"]}
+{"id":"hard_004","category":"hard","prompt":"Complete the Python code:\\nfor i in range(5):\\n    ","expected_contains":["print"]}
+{"id":"hard_005","category":"hard","prompt":"Explain what overfitting means in one sentence.","expected_contains":["generalization"]}
+{"id":"hard_006","category":"hard","prompt":"Compute 2+2 =","expected_contains":["4"]}

@@ -21,6 +21,9 @@ logger = dllm.utils.get_default_logger(__name__)
 @dataclass
 class ModelArguments:
     tokenizer_name_or_path: str = "gpt2"
+    # Optional warm start from an existing OneFlow checkpoint directory.
+    # Expected files include oneflow_config.json + model.safetensors (or pytorch_model.bin).
+    init_model_dir: str | None = None
 
     # OneFlow model size (toy defaults)
     dim: int = 512
@@ -199,20 +202,28 @@ def train():
             dataset = dataset.shuffle(seed=training_args.seed)
 
     # ----- Model ------------------------------------------------------------------
-    cfg = OneFlowConfig(
-        vocab_size=len(tokenizer),
-        bos_token_id=int(tokenizer.bos_token_id),
-        eos_token_id=int(tokenizer.eos_token_id),
-        pad_token_id=int(tokenizer.pad_token_id),
-        unk_token_id=int(tokenizer.unk_token_id) if tokenizer.unk_token_id is not None else None,
-        dim=model_args.dim,
-        depth=model_args.depth,
-        dim_head=model_args.dim_head,
-        heads=model_args.heads,
-        dim_latent=model_args.dim_latent,
-        tie_q_logits_to_embedding=bool(getattr(model_args, "tie_q_logits_to_embedding", False)),
-    )
-    model = OneFlowModel(cfg)
+    init_model_dir = getattr(model_args, "init_model_dir", None)
+    if init_model_dir:
+        init_model_dir = os.path.expanduser(str(init_model_dir))
+        if not os.path.exists(init_model_dir):
+            raise ValueError(f"init_model_dir does not exist: {init_model_dir}")
+        logger.info(f"Loading init model from checkpoint: {init_model_dir}")
+        model = OneFlowModel.from_pretrained(init_model_dir, map_location="cpu")
+    else:
+        cfg = OneFlowConfig(
+            vocab_size=len(tokenizer),
+            bos_token_id=int(tokenizer.bos_token_id),
+            eos_token_id=int(tokenizer.eos_token_id),
+            pad_token_id=int(tokenizer.pad_token_id),
+            unk_token_id=int(tokenizer.unk_token_id) if tokenizer.unk_token_id is not None else None,
+            dim=model_args.dim,
+            depth=model_args.depth,
+            dim_head=model_args.dim_head,
+            heads=model_args.heads,
+            dim_latent=model_args.dim_latent,
+            tie_q_logits_to_embedding=bool(getattr(model_args, "tie_q_logits_to_embedding", False)),
+        )
+        model = OneFlowModel(cfg)
 
     # ----- Training ---------------------------------------------------------------
     accelerate.PartialState().wait_for_everyone()

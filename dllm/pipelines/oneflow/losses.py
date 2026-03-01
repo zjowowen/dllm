@@ -99,12 +99,17 @@ def text_loss_paper_eq7_fast(
     bags_list: list[list[list[int]]],
     xt_positions: list[list[int]] | None = None,
     normalize_by_n: bool = True,
+    w: Optional[torch.Tensor] = None,
 ) -> TextEq7Loss:
     """
     Vectorized paper text loss (Eq. 7) implementation.
 
     This is functionally equivalent to `text_loss_paper_eq7`, but avoids per-bag tensor
     creation and reduces kernel launch overhead by flattening all bag tokens.
+
+    Args:
+        w: optional [B] per-sample weight (e.g. w(t) = κ'(t)/(1-κ(t))). When provided,
+           the per-sample loss is multiplied by w before taking the batch mean.
     """
     device = pi.device
     B = int(pi.shape[0])
@@ -128,7 +133,9 @@ def text_loss_paper_eq7_fast(
     lam_slots = lam.gather(dim=1, index=pos_pad)
 
     # π BCE: target 1 if k_i==0 else 0
-    pi_slots = pi_slots.clamp(1e-6, 1.0 - 1e-6)
+    # NOTE: NPU bf16 kernels may not provide BCE for all dtype combinations.
+    # Run BCE in fp32 for compatibility/stability.
+    pi_slots = pi_slots.clamp(1e-6, 1.0 - 1e-6).to(torch.float32)
     tgt_zero = (k_f == 0).to(torch.float32)
     bce = F.binary_cross_entropy(pi_slots, tgt_zero, reduction="none")
     loss_pi_sum = (bce * slot_mask_f).sum(dim=1)  # [B]
@@ -161,10 +168,22 @@ def text_loss_paper_eq7_fast(
     else:
         denom = torch.ones_like(n_slots)
 
-    loss_tok = (tok_loss_sum / denom).mean()
-    loss_pi = (loss_pi_sum / denom).mean()
-    loss_lam = (loss_lam_sum / denom).mean()
-    total = ((tok_loss_sum + loss_pi_sum + loss_lam_sum) / denom).mean()
+    per_tok = tok_loss_sum / denom    # [B]
+    per_pi = loss_pi_sum / denom      # [B]
+    per_lam = loss_lam_sum / denom    # [B]
+    per_total = per_tok + per_pi + per_lam  # [B]
+
+    # Optional per-sample w(t) reweighting
+    if w is not None:
+        per_tok = per_tok * w
+        per_pi = per_pi * w
+        per_lam = per_lam * w
+        per_total = per_total * w
+
+    loss_tok = per_tok.mean()
+    loss_pi = per_pi.mean()
+    loss_lam = per_lam.mean()
+    total = per_total.mean()
 
     return TextEq7Loss(total=total, loss_tok=loss_tok, loss_lam=loss_lam, loss_pi=loss_pi)
 
@@ -177,6 +196,7 @@ def text_loss_paper_eq7_fast_from_logits(
     bags_list: list[list[list[int]]],
     xt_positions: list[list[int]] | None = None,
     normalize_by_n: bool = True,
+    w: Optional[torch.Tensor] = None,
 ) -> TextEq7Loss:
     """
     Fast Eq(7) loss computed directly from logits (avoids materializing full log-softmax).
@@ -185,6 +205,10 @@ def text_loss_paper_eq7_fast_from_logits(
       -log softmax(q)[tok] = -(q_tok - logsumexp(q))
 
     This saves both time and memory compared to building `logQ = log_softmax(q_logits, -1)`.
+
+    Args:
+        w: optional [B] per-sample weight (e.g. w(t) = κ'(t)/(1-κ(t))). When provided,
+           the per-sample loss is multiplied by w before taking the batch mean.
     """
     device = pi.device
     B = int(pi.shape[0])
@@ -207,7 +231,9 @@ def text_loss_paper_eq7_fast_from_logits(
     lam_slots = lam.gather(dim=1, index=pos_pad)
 
     # π BCE: target 1 if k_i==0 else 0
-    pi_slots = pi_slots.clamp(1e-6, 1.0 - 1e-6)
+    # NOTE: NPU bf16 kernels may not provide BCE for all dtype combinations.
+    # Run BCE in fp32 for compatibility/stability.
+    pi_slots = pi_slots.clamp(1e-6, 1.0 - 1e-6).to(torch.float32)
     tgt_zero = (k_f == 0).to(torch.float32)
     bce = F.binary_cross_entropy(pi_slots, tgt_zero, reduction="none")
     loss_pi_sum = (bce * slot_mask_f).sum(dim=1)  # [B]
@@ -242,10 +268,22 @@ def text_loss_paper_eq7_fast_from_logits(
     else:
         denom = torch.ones_like(n_slots)
 
-    loss_tok = (tok_loss_sum / denom).mean()
-    loss_pi = (loss_pi_sum / denom).mean()
-    loss_lam = (loss_lam_sum / denom).mean()
-    total = ((tok_loss_sum + loss_pi_sum + loss_lam_sum) / denom).mean()
+    per_tok = tok_loss_sum / denom    # [B]
+    per_pi = loss_pi_sum / denom      # [B]
+    per_lam = loss_lam_sum / denom    # [B]
+    per_total = per_tok + per_pi + per_lam  # [B]
+
+    # Optional per-sample w(t) reweighting
+    if w is not None:
+        per_tok = per_tok * w
+        per_pi = per_pi * w
+        per_lam = per_lam * w
+        per_total = per_total * w
+
+    loss_tok = per_tok.mean()
+    loss_pi = per_pi.mean()
+    loss_lam = per_lam.mean()
+    total = per_total.mean()
 
     return TextEq7Loss(total=total, loss_tok=loss_tok, loss_lam=loss_lam, loss_pi=loss_pi)
 

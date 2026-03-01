@@ -1,0 +1,10 @@
+compute_environment: LOCAL_MACHINE
+distributed_type: MULTI_NPU
+downcast_bf16: "no"
+
+# 2 nodes x 16 NPUs = 32 ranks total.
+# machine_rank is overridden at launch time per node.
+machine_rank: 0
+num_machines: 2
+num_processes: 32
+

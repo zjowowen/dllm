@@ -19,6 +19,10 @@ __all__ = [
     "llada",
     "llada2",
     "oneflow",
+    "oneflow_text_only",
+    "oneflow_image_only",
+    "oneflow_mixed_generation",
+    "oneflow_interleaved",
     # utils module in this package
     "ctmc_utils",
 ]

@@ -1,0 +1,16 @@
+{"id":"text_001","category":"text_only","prompt":"The capital of France is","expected_contains":["Paris"]}
+{"id":"text_002","category":"text_only","prompt":"Write a Python function that adds two numbers.","expected_contains":["def","return"]}
+{"id":"text_003","category":"text_only","prompt":"Continue this paragraph in natural English: OneFlow is a generative model that"}
+{"id":"text_004","category":"text_only","prompt":"The largest ocean on Earth is the","expected_contains":["Pacific"]}
+{"id":"image_001","category":"image_gen","prompt":"a photo of a red rose in a garden"}
+{"id":"image_002","category":"image_gen","prompt":"a sunflower field under blue sky"}
+{"id":"image_003","category":"image_gen","prompt":"a sunset over the ocean"}
+{"id":"image_004","category":"image_gen","prompt":"a red apple on a wooden table"}
+{"id":"mixed_001","category":"mixed","prompt":"Describe a flower: a beautiful red rose is"}
+{"id":"mixed_002","category":"mixed","prompt":"An image of a mountain landscape with"}
+{"id":"mixed_003","category":"mixed","prompt":"The weather today shows clear skies and"}
+{"id":"mixed_004","category":"mixed","prompt":"A photograph showing a calm lake with"}
+{"id":"cap_001","category":"captioning","prompt":"This image shows"}
+{"id":"cap_002","category":"captioning","prompt":"In this photograph we can see"}
+{"id":"cap_003","category":"captioning","prompt":"A detailed description of the scene:"}
+{"id":"cap_004","category":"captioning","prompt":"The main subject of this image is"}
