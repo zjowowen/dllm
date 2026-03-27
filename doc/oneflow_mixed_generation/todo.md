@@ -2,17 +2,14 @@
 
 ## Completed
 
-（暂无）
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/dllm/pipelines/oneflow_mixed_generation/` 已存在。
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_mixed_generation/pt_mixed.py` 已存在。
 
-## Pipeline 搭建
+## 现状确认
 
-- [ ] Create `dllm/pipelines/oneflow_mixed_generation` package scaffold and lazy exports.
-- [ ] Implement `OneFlowMixedGenerationTrainer`（继承 OneFlowTrainer，设定 mixed generation 默认配置）.
-- [ ] Add training entry `examples/oneflow_mixed_generation/pt_mixed.py`.
-- [ ] Add script entries:
-  - [ ] `scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh`
-  - [ ] `scripts/oneflow_mixed_generation/eval_mixed_loss.py`
-- [ ] Run local smoke checks (compile + runtime + both losses finite).
+- [ ] 当前 worktree 未提供 mixed-generation 专用 launcher；执行训练时复用现有 `accelerate launch` 模板并保持入口为 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_mixed_generation/pt_mixed.py`。
+- [ ] 当前 worktree 未提供 dedicated mixed-generation eval 脚本；不要把 loss / sample 评测写成现成脚本已存在。
+- [ ] 先跑一次 smoke：text/image forward-backward 正常，且 `log_split_losses=True` 时两路 loss 都能记录。
 
 ## 基线实验（Phase 2a）
 

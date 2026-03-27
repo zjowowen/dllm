@@ -1,22 +1,29 @@
 # OneFlow 文档索引
 
-本目录为 OneFlow 分支的设计、训练、验证与工程文档索引。已按用途拆分为 `design/`、`guides/`、`validation/`、`engineering/` 四类，并保留中英文双版本（英文为精简版，中文为详版）。
+本目录为 OneFlow 分支的轻量导航页。状态判断请先看 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/PROGRESS.md`；本页只保留高频入口，不重复展开状态细节。
 
-## 快速入口
-- 归零式验证主线：`doc/oneflow/validation/oneflow_zero_validation_zh.md`
-- 过拟合/排障手册：`doc/oneflow/validation/oneflow_overfit_debug_zh.md`
-- 数据准备 → NPU 训练流程：`doc/oneflow/guides/oneflow_data_prep_and_train_npu_zh.md`
-- 文本训练计划（PT → SFT）：`doc/oneflow/guides/oneflow_text_training_plan_npu_zh.md`
-- H200 离线执行手册（PT + 伪 SFT + 评测）：`doc/oneflow/guides/oneflow_h200_offline_pt_pseudo_sft_zh.md`
-- 分支进度与下一步：`doc/oneflow/PROGRESS.md`
+## 先看这里
+- 当前状态：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/PROGRESS.md`
+- 验证主线：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_zero_validation_zh.md`
+- 排障手册：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_overfit_debug_zh.md`
+- 文本训练计划：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/guides/oneflow_text_training_plan_npu_zh.md`
+- H200 离线执行：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/guides/oneflow_h200_offline_pt_pseudo_sft_zh.md`
 
-## 设计与论文基准
-- 中文详版设计：`doc/oneflow/design/oneflow_design_zh.md`
-- English concise design：`doc/oneflow/design/oneflow_design_en.md`
-- 论文规格摘录（可审计）：`doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
-- 代码对齐审计：`doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
+## 设计
+- 中文设计：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_design_zh.md`
+- 英文设计：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_design_en.md`
+- 论文规格摘录：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
 
-## 工程计划
-- EditFlow/OneFlow 工具复用与 prompt_len 语义：`doc/oneflow/engineering/oneflow_editflow_utils_reuse_plan_zh.md`
-- H200 实时进展日志：`doc/oneflow/engineering/oneflow_h200_progress_log.md`
+## 验证
+- 对齐审计：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
+- 归零验证：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_zero_validation_zh.md`
+- 过拟合排障：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_overfit_debug_zh.md`
 
+## 训练与执行
+- 数据准备与训练：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/guides/oneflow_data_prep_and_train_npu_zh.md`
+- 文本训练计划：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/guides/oneflow_text_training_plan_npu_zh.md`
+- H200 离线 PT+伪 SFT：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/guides/oneflow_h200_offline_pt_pseudo_sft_zh.md`
+
+## 工程记录
+- EditFlow 复用计划：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/engineering/oneflow_editflow_utils_reuse_plan_zh.md`
+- H200 进展日志：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/engineering/oneflow_h200_progress_log.md`

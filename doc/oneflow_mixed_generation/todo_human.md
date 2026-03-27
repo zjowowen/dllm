@@ -1,6 +1,6 @@
 # Mixed Generation 训练实验 TODO (Human Execution)
 
-实验进展记录在 `doc/oneflow_mixed_generation/PROGRESS.md` 中。
+实验进展记录在 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow_mixed_generation/PROGRESS.md` 中。
 
 ---
 
@@ -16,11 +16,17 @@
 
 **目标**：验证 text + image 能同时优化。
 
+**说明**：当前 worktree 未提供 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh`；请改用现有训练入口 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_mixed_generation/pt_mixed.py`。当前也未提供 dedicated mixed-generation eval 脚本。
+
 **执行命令**：
 ```bash
-bash scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh \
-  --shards "data/latents_128_bundle/wds_latents_flower32" \
-  --output_dir data/ckpts/mixed_gen_2a1_baseline \
+accelerate launch \
+  --config_file /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/accelerate_configs/npu_ddp.yaml \
+  --main_process_port 29500 \
+  /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_mixed_generation/pt_mixed.py \
+  --tokenizer_name_or_path /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/tokenizer \
+  --shards "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/wds_latents_flower32" \
+  --output_dir /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/ckpts/mixed_gen_2a1_baseline \
   --max_steps 2000 \
   --mixed_generation_prob 0.5 \
   --image_loss_weight 1.0 \
@@ -42,9 +48,13 @@ bash scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh \
 
 **执行命令**：
 ```bash
-bash scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh \
-  --shards "data/latents_128_bundle/wds_latents_flower32" \
-  --output_dir data/ckpts/mixed_gen_2a2_w5 \
+accelerate launch \
+  --config_file /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/accelerate_configs/npu_ddp.yaml \
+  --main_process_port 29500 \
+  /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_mixed_generation/pt_mixed.py \
+  --tokenizer_name_or_path /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/tokenizer \
+  --shards "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/wds_latents_flower32" \
+  --output_dir /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/ckpts/mixed_gen_2a2_w5 \
   --max_steps 2000 \
   --mixed_generation_prob 0.5 \
   --image_loss_weight 5.0 \
@@ -63,9 +73,13 @@ bash scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh \
 
 **执行命令**：
 ```bash
-bash scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh \
-  --shards "data/latents_128_bundle/wds_latents_flower32" \
-  --output_dir data/ckpts/mixed_gen_2a3_p02 \
+accelerate launch \
+  --config_file /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/accelerate_configs/npu_ddp.yaml \
+  --main_process_port 29500 \
+  /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_mixed_generation/pt_mixed.py \
+  --tokenizer_name_or_path /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/tokenizer \
+  --shards "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/wds_latents_flower32" \
+  --output_dir /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/ckpts/mixed_gen_2a3_p02 \
   --max_steps 2000 \
   --mixed_generation_prob 0.2 \
   --image_loss_weight 1.0 \
@@ -84,9 +98,13 @@ bash scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh \
 
 **执行命令**：
 ```bash
-bash scripts/oneflow_mixed_generation/launch_pt_mixed_910c.sh \
-  --shards "data/latents_128_bundle/wds_latents_flower32" \
-  --output_dir data/ckpts/mixed_gen_2a4_paper \
+accelerate launch \
+  --config_file /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/accelerate_configs/npu_ddp.yaml \
+  --main_process_port 29500 \
+  /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_mixed_generation/pt_mixed.py \
+  --tokenizer_name_or_path /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/tokenizer \
+  --shards "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/wds_latents_flower32" \
+  --output_dir /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/ckpts/mixed_gen_2a4_paper \
   --max_steps 2000 \
   --mixed_generation_prob 0.5 \
   --image_loss_weight 1.0 \

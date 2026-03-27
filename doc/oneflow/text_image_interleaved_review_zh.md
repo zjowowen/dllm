@@ -1,15 +1,15 @@
 # OneFlow Text-Image Interleaved 架构审查与实验设计
 
-> **背景**：`oneflow_text_only` 的控制变量实验仍在进行中，已确认 CTMC loss 对训练稳定性的关键改善作用（见 `doc/oneflow_text_only/losses_design_zh.md` 与 `PROGRESS_experiment.md`）。本文档在此基础上，提前对 text-image interleaved（多模态）的架构进行系统审查，并设计整体实验方案。
+> **背景**：`oneflow_text_only` 的控制变量实验仍在进行中，已确认 CTMC loss 对训练稳定性的关键改善作用（见 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow_text_only/losses_design_zh.md` 与 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow_text_only/PROGRESS_experiment.md`）。本文档在此基础上，提前对 text-image interleaved（多模态）的架构进行系统审查，并设计整体实验方案。
 >
 > **关联文档**：
-> - 算法设计总览：`doc/oneflow/design/oneflow_design_zh.md`
-> - 论文规格摘录：`doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
-> - 代码对齐审计：`doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
-> - 归零式验证手册：`doc/oneflow/validation/oneflow_zero_validation_zh.md`
-> - Transfusion 三仓对比：`doc/oneflow/engineering/transfusion_three_repo_comparison_zh.md`
-> - Text-only 实验进展：`doc/oneflow_text_only/PROGRESS_experiment.md`
-> - Text-only Loss 设计解析：`doc/oneflow_text_only/losses_design_zh.md`
+> - 算法设计总览：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_design_zh.md`
+> - 论文规格摘录：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
+> - 代码对齐审计：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
+> - 归零式验证手册：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_zero_validation_zh.md`
+> - Transfusion 三仓对比：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/engineering/transfusion_three_repo_comparison_zh.md`
+> - Text-only 实验进展：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow_text_only/PROGRESS_experiment.md`
+> - Text-only Loss 设计解析：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow_text_only/losses_design_zh.md`
 
 ---
 
@@ -48,11 +48,12 @@ t_text = min(1, τ_text)
 
 **重点审查项 A：τ_text > 1 时的行为**
 
-当 τ_text ∈ (1, 2] 时，t_text = 1，意味着**所有文本 token 都被保留**（κ(1) = 1），文本侧不做删除。此时仅有图像在训练。这对应论文的 "mixed generation" 机制：文本完全保留的同时训练图像 flow matching。
+当 τ_text ∈ (1, 2] 时，t_text = 1，意味着**按当前调度语义应当是所有文本 token 都被保留**（κ(1) = 1），文本侧不做删除。论文将该区间作为 "mixed generation" / image-only 过渡语义；但对当前仓库而言，这仍应视为**待验证的目标行为**，不能直接当作已充分验收的既成事实。
 
 - **需验证**：当 t_text = 1 时，文本 loss 的分母 n = len(X_t) = len(X_1)，且所有 bag 为空（k_i = 0 ∀i）。此时：
   - Paper Eq7：loss_tok = 0, loss_lam = 0, loss_pi = Σ BCE(π_i, 1) → 推动 π→1（正确）
   - CTMC：w(1) = κ'(1)/(1-κ(1)) → 发散（⚠️ 被 max_w 截断，但需确认截断值是否合理）
+- **实现口径说明**：`tau_text_max` 可以表达论文中的上界语义，但 `tau_text_min` 目前还不是已完全打通的核心运行时配置；同理，这里的 mixed/image-only 讨论应优先理解为实验目标语义，而不是“基础路径已经稳定支持所有阶段控制”。
 
 **重点审查项 B：图像删除后的 bag 合并语义**
 
@@ -102,7 +103,7 @@ t_text = min(1, τ_text)
 | Paper Eq7 | token CE + π BCE + λ 零截断 Poisson，**不乘** w(t) | ⚠️ 不稳定（text_only 实验已确认：90x 方差） | ✅ 论文原始形式 |
 | CTMC | survival + positive，**乘** w(t) = κ'/(1-κ) | ✅ 稳定（1.2x 方差） | ≈ 论文前作 Edit Flows 形式 |
 
-**关键发现（来自 text_only 实验，`PROGRESS_experiment.md`）**：
+**关键发现（来自 text_only 实验，`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow_text_only/PROGRESS_experiment.md`）**：
 
 Paper Eq7 的不稳定根因：
 1. 归一化分母 n（n_slots）在 t→1 时趋近 1，导致 CE 累加爆炸
@@ -367,7 +368,7 @@ Phase 5: 规模化
 
 ## 5. Phase 0：归零验证
 
-**目标**：确保数据管线和核心模块无 bug，对应 `oneflow_zero_validation_zh.md` 的 Stage 0-5。
+**目标**：确保数据管线和核心模块无 bug，对应 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_zero_validation_zh.md` 的 Stage 0-5。
 
 | 子项 | 内容 | 验收标准 | 对应命令 |
 |------|------|----------|----------|
@@ -401,7 +402,6 @@ accelerate launch ... examples/oneflow/pt_text.py \
   --text_loss_type ctmc \
   --condition_text_on_time True \
   --normalize_text_loss_by_length True \
-  --mixed_generation_prob 0.0 \
   --max_steps 1000 \
   --per_device_train_batch_size 8
 ```
@@ -414,7 +414,7 @@ accelerate launch ... examples/oneflow/pt_text.py \
 
 **目的**：孤立验证图像侧 flow matching 训练是否正确。
 
-**方法**：设 `mixed_generation_prob=1.0`，但修改训练逻辑使 τ_text 固定为 2.0（文本全保留），仅训练图像 flow matching。
+**方法**：保留该实验矩阵，但将其视为 **image-only 目标语义的实验入口**：可优先使用专门的 image-only 训练入口，或通过受控实验把 τ_text 推到文本全保留区间。不要把 `mixed_generation_prob=1.0` 直接解读为“基础 oneflow 主入口已被证明能稳定控制 image-only 核心路径”；`tau_text_min` 相关下界语义也仍待补齐为核心配置。
 
 **实验矩阵**：
 
@@ -437,7 +437,7 @@ accelerate launch ... examples/oneflow/pt_text.py \
 
 **目的**：验证 text loss + image loss 能同时优化且不互相干扰。
 
-**方法**：使用 `mixed_generation_prob` 控制每个 batch 中包含图像的比例。
+**方法**：保留 `mixed_generation_prob` 作为入门级 mixed-generation 实验语义，用来表达“希望多少样本走含图像分支”的目标；但当前不应把它表述成**已经充分验证的基础主路径控制开关**，其实际生效点与训练闭环仍需单独实现/验收。
 
 **实验矩阵**：
 
@@ -462,7 +462,7 @@ accelerate launch ... examples/oneflow/pt_text.py \
 
 **目的**：验证完整的 τ_text ~ Unif[0,2] interleaved schedule。
 
-**方法**：不再人工控制 `mixed_generation_prob`，使用 Algorithm 3 的完整逻辑。
+**方法**：目标是转向 Algorithm 3 的完整 interleaved 逻辑；这里的表述强调的是**目标阶段语义**，不是说 `mixed_generation_prob` 或其它阶段性控制已经在基础实现里被完全替代并验证完毕。
 
 **实验矩阵**：
 
@@ -489,16 +489,15 @@ accelerate launch ... examples/oneflow/pt_text.py \
 
 **目的**：确认训练后的模型能通过 sampler 生成有意义的文本。
 
-**方法**：使用 Phase 1a 或 2a 的 checkpoint，运行纯文本采样。
+**方法**：使用 Phase 1a 或 2a 的 checkpoint 运行纯文本采样。纯文本可用轻量入口 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow/sample.py`；涉及图像或三模式切换时，优先使用 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_interleaved/sample_interleaved.py`。
 
 ```bash
 python examples/oneflow/sample.py \
   --model_dir <checkpoint> \
-  --mode text_only \
-  --num_steps 20 \
+  --prompt "OneFlow is a generative model" \
+  --max_steps 20 \
   --dt 0.05 \
-  --use_pi_gate True \
-  --max_new_tokens 128
+  --use_pi_gate True
 ```
 
 **验收标准**：
@@ -513,12 +512,14 @@ python examples/oneflow/sample.py \
 **方法**：给定固定 prompt（如 `"a photo of a flower <|oneflow_image|>"`），运行采样并 VAE decode。
 
 ```bash
-python examples/oneflow/sample.py \
+python -u examples/oneflow_interleaved/sample_interleaved.py \
   --model_dir <checkpoint> \
-  --prompt "a photo of a flower" \
   --mode image_conditioned \
-  --num_steps 20 \
-  --dt 0.05
+  --prompt "a photo of a flower" \
+  --vae_id_or_path stabilityai/sd-vae-ft-mse \
+  --max_steps 20 \
+  --dt 0.05 \
+  --output_dir outputs/interleaved_image_check
 ```
 
 **验收标准**：
@@ -533,13 +534,16 @@ python examples/oneflow/sample.py \
 **方法**：从 BOS 开始，允许模型自由生成文本和图像。
 
 ```bash
-python examples/oneflow/sample.py \
+python -u examples/oneflow_interleaved/sample_interleaved.py \
   --model_dir <checkpoint> \
   --mode interleaved \
-  --num_steps 40 \
+  --prompt "a photo of a flower" \
+  --vae_id_or_path stabilityai/sd-vae-ft-mse \
+  --max_steps 40 \
   --dt 0.05 \
   --max_new_tokens 256 \
-  --max_seq_len 512
+  --max_seq_len 512 \
+  --output_dir outputs/interleaved_full_check
 ```
 
 **关键观测**：

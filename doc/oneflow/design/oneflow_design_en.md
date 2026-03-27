@@ -1,14 +1,14 @@
 # OneFlow Multimodal Design (Concise, EN)
 
 This is a concise English summary. For the full Chinese design with implementation details, see:
-- `doc/oneflow/design/oneflow_design_zh.md`
-- Paper specs: `doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
-- Code alignment audit: `doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
+- `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_design_zh.md`
+- Paper specs: `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
+- Code alignment audit: `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
 
 ---
 
 ## 1. Goal & Scope
-- Add OneFlow pipeline (`dllm/pipelines/oneflow/`) with training + sampling.
+- Add OneFlow pipeline (`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/dllm/pipelines/oneflow/`) with training + sampling.
 - Text: insertion-based Edit Flow; Image: latent flow matching.
 - Interleaved schedule κ to co-generate text and images.
 - Emphasis: algorithm correctness and extensible engineering; not full paper-scale recipe.
@@ -27,7 +27,8 @@ Key refs:
 ---
 
 ## 3. Training (Algorithm 3)
-- Sample `τ_text` in [0,1] (or [1,2] with `mixed_generation_prob`), set `t_text=min(1, τ_text)`.
+- Sample `τ_text` in `[0, tau_text_max]`, set `t_text=min(1, τ_text)`.
+- The `τ_text > 1` region is the intended mixed/image-only stage semantics, but not proof that every stage-specific control is already fully wired through the base implementation; treat `mixed_generation_prob` and related stage controls as experimental unless separately validated.
 - Keep tokens with prob κ(t_text); build `X_t` + bag-of-tokens `A_i`.
 - **Text loss**: Eq(7) = token CE + π BCE + Poisson(λ_nonzero, k>0), **no** `w(t)` weighting.
 - **Image loss**: interleaved schedule `τ_img = τ_text - κ^{-1}(u)` and flow matching `||v(Y_t,t)-(Y1-Y0)||^2`.
@@ -50,9 +51,9 @@ Key refs:
 ---
 
 ## 6. Repo Integration
-- Paths: `dllm/pipelines/oneflow/`, `examples/oneflow/`.
+- Paths: `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/dllm/pipelines/oneflow/`, `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow/`.
 - Engineering refactor (CTMC helpers + `prompt_len` semantics) is documented separately:
-  - `doc/oneflow/engineering/oneflow_editflow_utils_reuse_plan_zh.md`
+  - `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/engineering/oneflow_editflow_utils_reuse_plan_zh.md`
 
 ---
 
@@ -60,4 +61,3 @@ Key refs:
 - Text-only toy run (variable-length insertion works).
 - Text+image toy run (sample at least one image latent, optional VAE decode).
 - Clean, extensible structure for future extensions.
-

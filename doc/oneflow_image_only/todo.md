@@ -2,18 +2,15 @@
 
 ## Completed
 
-（暂无）
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/dllm/pipelines/oneflow_image_only/` 已存在。
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_image_only/pt_image.py` 已存在。
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/oneflow_image_only/eval_image_sample.py` 已存在。
 
-## Pipeline 搭建
+## 现状确认
 
-- [ ] Create `dllm/pipelines/oneflow_image_only` package scaffold and lazy exports.
-- [ ] Implement `OneFlowImageOnlyTrainer`（继承 OneFlowTrainer，锁定 image-only 配置）.
-- [ ] Add training entry `examples/oneflow_image_only/pt_image.py`.
-- [ ] Add script entries:
-  - [ ] `scripts/oneflow_image_only/launch_pt_image_910c.sh`
-  - [ ] `scripts/oneflow_image_only/eval_image_only_loss.py`
-  - [ ] `scripts/oneflow_image_only/eval_image_only_sample.py`
-- [ ] Run local smoke checks (compile + runtime + loss finite).
+- [ ] 当前 worktree 未提供独立的 image-only 910C launcher；执行训练时复用现有 `accelerate launch` 模板并保持入口为 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_image_only/pt_image.py`。
+- [ ] 当前 worktree 未提供独立的 image-only loss eval 脚本；如需离线 loss 检查，补充专项脚本或在训练日志中记录。
+- [ ] 先跑一次 smoke：forward/backward 不崩、image loss 有限、采样脚本可读取 checkpoint。
 
 ## 基线实验（单 shard overfit）
 
@@ -26,7 +23,7 @@
 
 - [ ] Run full flower32 dataset training (1000 steps).
 - [ ] Compare image_loss_weight = {0.1, 1.0, 5.0, 10.0}.
-- [ ] Evaluate sampling quality with different dt = {0.02, 0.05, 0.1}.
+- [ ] Use `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/oneflow_image_only/eval_image_sample.py` 评估不同 `dt = {0.02, 0.05, 0.1}` 的采样质量。
 
 ## Risks to monitor
 

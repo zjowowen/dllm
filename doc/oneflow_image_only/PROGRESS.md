@@ -2,7 +2,7 @@
 
 > **目标**：孤立验证图像侧 Flow Matching 训练的正确性，不受文本插入 loss 干扰。
 >
-> **对应实验阶段**：`doc/oneflow/text_image_interleaved_review_zh.md` → Phase 1b
+> **对应实验阶段**：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/text_image_interleaved_review_zh.md` → Phase 1b
 >
 > **前置依赖**：Phase 0 归零验证已通过（Stage 0 latent decode + Stage 2 image flow matching 单测）
 
@@ -22,15 +22,15 @@
 
 ## 实现状态
 
-### Pipeline
+### 入口/包装层现状
 
-- [ ] `dllm/pipelines/oneflow_image_only/` pipeline scaffold（trainer, sampler, runtime_config）
-- [ ] `examples/oneflow_image_only/pt_image.py` 训练入口
-- [ ] `scripts/oneflow_image_only/launch_pt_image_910c.sh` 910C 启动脚本
-- [ ] `scripts/oneflow_image_only/eval_image_only_loss.py` 图像 loss 评测
-- [ ] `scripts/oneflow_image_only/eval_image_only_sample.py` 采样 + VAE decode 评测
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/dllm/pipelines/oneflow_image_only/` 已存在；当前仍主要是对基础 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/dllm/pipelines/oneflow` 训练/采样逻辑的轻包装
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_image_only/pt_image.py` 已存在，可作为 image-only 训练入口
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/oneflow_image_only/eval_image_sample.py` 已存在，可作为采样 + VAE decode 评测入口
+- [ ] 当前目录下未找到独立 910C launcher 脚本
+- [ ] 当前目录下未找到独立 image loss 评测脚本
 
-### 验证
+### 验证状态
 
 - [ ] CPU smoke：forward + backward 不崩，image loss 有限
 - [ ] Oracle 测试：当 v = flow_target 时 loss ≈ 0
@@ -48,14 +48,17 @@
 ## 关键配置
 
 ```yaml
-# image-only 训练的核心参数
-mixed_generation_prob: 1.0       # 所有样本都包含图像
-tau_text_min: 1.5                # 固定 τ_text > 1，确保文本全保留
-tau_text_max: 2.0                # τ_text ∈ [1.5, 2.0]
+# image-only 训练当前可确认的核心参数
+mixed_generation_prob: 1.0       # 当前入口层默认所有样本都带图像
+tau_text_max: 2.0                # 当前核心逻辑主要依赖 tau_text_max
 image_loss_weight: 1.0           # 图像 loss 权重
-text_loss_type: ctmc             # 文本 loss 类型（此阶段文本 loss 极小）
+text_loss_type: ctmc             # 文本 loss 仍会走基础 oneflow 路径
 condition_text_on_time: False    # 文本不条件于时间
 ```
+
+- `tau_text_min` 不是当前 core config 的已确认字段；image-only 语义目前主要依赖 `tau_text_max` 与 `t_text = min(1, tau_text)` 后文本全保留这一基础路径
+- 因此，这里的 image-only 更接近基于现有 oneflow 训练流的配置收缩，不应写成已独立闭环的新训练体系
+- overfit / reconstruction / decode loop 仍应视为待验证，不应写成已闭环
 
 ---
 
@@ -70,6 +73,6 @@ condition_text_on_time: False    # 文本不条件于时间
 
 ## 参考文档
 
-- 论文图像 Flow Matching：`doc/oneflow/design/oneflow_paper_spec_2510_03506.md` § 2
-- 归零验证 Stage 2：`doc/oneflow/validation/oneflow_zero_validation_zh.md` § Stage 2
-- 架构审查：`doc/oneflow/text_image_interleaved_review_zh.md` § 1.3 (图像 loss) + § 6.2 (Phase 1b)
+- 论文图像 Flow Matching：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_paper_spec_2510_03506.md` § 2
+- 归零验证 Stage 2：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_zero_validation_zh.md` § Stage 2
+- 架构审查：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/text_image_interleaved_review_zh.md` § 1.3 (图像 loss) + § 6.2 (Phase 1b)

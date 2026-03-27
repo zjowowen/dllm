@@ -2,20 +2,15 @@
 
 ## Completed
 
-（暂无）
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/dllm/pipelines/oneflow_interleaved/` 已存在。
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_interleaved/pt_interleaved.py` 已存在。
+- [x] `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_interleaved/sample_interleaved.py` 已存在。
 
-## Pipeline 搭建
+## 现状确认
 
-- [ ] Create `dllm/pipelines/oneflow_interleaved` package scaffold and lazy exports.
-- [ ] Implement `OneFlowInterleavedTrainer`（继承 OneFlowTrainer，锁定 interleaved 配置）.
-- [ ] Implement `OneFlowInterleavedSampler`（继承 OneFlowSampler）.
-- [ ] Add training entry `examples/oneflow_interleaved/pt_interleaved.py`.
-- [ ] Add sampling entry `examples/oneflow_interleaved/sample_interleaved.py`.
-- [ ] Add script entries:
-  - [ ] `scripts/oneflow_interleaved/launch_pt_interleaved_910c.sh`
-  - [ ] `scripts/oneflow_interleaved/eval_interleaved_loss.py`
-  - [ ] `scripts/oneflow_interleaved/eval_interleaved_sample.py`
-- [ ] Run local smoke checks.
+- [ ] 当前 worktree 未提供 interleaved 专用 launcher；执行训练时复用现有 `accelerate launch` 模板并保持入口为 `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_interleaved/pt_interleaved.py`。
+- [ ] 当前 worktree 未提供 dedicated interleaved loss / sample eval 脚本；不要把这些脚本写成已存在。
+- [ ] 先跑一次 smoke：训练入口可起、`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/examples/oneflow_interleaved/sample_interleaved.py` 能读取 checkpoint，并确认 `bs=1` / `infill` 限制未被忽略。
 
 ## Phase 2b 实验（Interleaved 训练）
 

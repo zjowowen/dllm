@@ -4,11 +4,11 @@
 
 论文参考：[arXiv:2510.03506](https://arxiv.org/html/2510.03506)
 
-本仓库已落地的论文规格摘录：`doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
+本仓库已落地的论文规格摘录：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_paper_spec_2510_03506.md`
 
 相关文档：
-- 设计总览（算法与结构）：`doc/oneflow/design/oneflow_design_zh.md`
-- 代码对齐审计（Trainer/Sampler）：`doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
+- 设计总览（算法与结构）：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/design/oneflow_design_zh.md`
+- 代码对齐审计（Trainer/Sampler）：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/doc/oneflow/validation/oneflow_paper_alignment_audit_2510_03506.md`
 
 ---
 
@@ -52,7 +52,7 @@ flowchart TD
   - `manifest.jsonl`（记录 key、latent shape、decode HW 等）
 
 ### 0.3 推荐命令
-使用现有脚本：`scripts/oneflow/verify_wds_latents_decode.py`（会输出 `*.png/*.txt/manifest.jsonl`）
+使用现有脚本：`/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/oneflow/verify_wds_latents_decode.py`（会输出 `*.png/*.txt/manifest.jsonl`）
 
 **模板 A（快速抽样检查，推荐先跑）**
 
@@ -120,10 +120,10 @@ python -u scripts/oneflow/verify_wds_latents_decode.py \
   - `prompt_len`（可选；如果提供，前缀 token 强制保留）
   - scheduler：`κ(t)`（text-only 不用 inverse）
 - **操作**：
-  1) 采样 `τ_text` 与 `t_text`\n
-  2) 采样 keep mask（prob=κ(t_text)），构造 `X_t` 与 `A_i`\n
-  3) 前向得到 `π/λ_nonzero/Q`\n
-  4) 计算 Eq(7) loss（并可单独输出 3 个分量）\n
+  1) 采样 `τ_text` 与 `t_text`
+  2) 采样 keep mask（prob=κ(t_text)），构造 `X_t` 与 `A_i`
+  3) 前向得到 `π/λ_nonzero/Q`
+  4) 计算 Eq(7) loss（并可单独输出 3 个分量）
 - **输出**：
   - `X_t`（token 序列）
   - `A_i`（bags，长度 = `len(X_t)`）
@@ -185,10 +185,11 @@ bash scripts/oneflow/stage1_text_only_train.sh \
 ## Stage 2：纯图像（image-only flow matching）正确性
 
 ### 2.1 目标
-在最小文本条件下验证图像侧（不让“文本插入”掺和进来）：\n
-- `Y_t = tY1 + (1-t)Y0` 与 `flow=Y1-Y0` 的监督逻辑正确\n
-- `v==flow` 时 `loss_img≈0`（数值单测）\n
-- Euler 更新 `Y += dt * v` 的切片/shape 对齐 `modality_positions`\n
+在最小文本条件下验证图像侧（不让“文本插入”掺和进来）：
+
+- `Y_t = tY1 + (1-t)Y0` 与 `flow=Y1-Y0` 的监督逻辑正确
+- `v==flow` 时 `loss_img≈0`（数值单测）
+- Euler 更新 `Y += dt * v` 的切片/shape 对齐 `modality_positions`
 
 ### 2.2 输入 → 输出
 - **输入**：
@@ -217,13 +218,15 @@ pytest -q scripts/tests/test_oneflow_image_flow_matching.py
 ## Stage 3：mixed-modal unified sequence 拼接正确性（最关键）
 
 ### 3.1 目标
-验证 unified sequence 的拼接是完全可解释且可逆的：\n
-- `xt_to_total_pos` 映射正确（每个 `X_t` 的 text token 在 unified 序列中的位置）\n
-- `modality_positions=(type, offset, length)` 正确且与实际插入 tokens 一致\n
-- `is_any_modality` 与 `modality_tokens / flow_targets / times` 对齐（padding 后也对齐）\n
+验证 unified sequence 的拼接是完全可解释且可逆的：
+
+- `xt_to_total_pos` 映射正确（每个 `X_t` 的 text token 在 unified 序列中的位置）
+- `modality_positions=(type, offset, length)` 正确且与实际插入 tokens 一致
+- `is_any_modality` 与 `modality_tokens / flow_targets / times` 对齐（padding 后也对齐）
 
 ### 3.2 位置表（trace 可视化核心）
-我们会在 trace 中输出一张“总位置表”（建议写到 `trace.json` 或 `trace.md`）：\n
+我们会在 trace 中输出一张“总位置表”（建议写到 `trace.json` 或 `trace.md`）：
+
 
 | total_pos | kind | text_token_id | img_idx | mod_local_j | time | notes |
 |---:|---|---:|---:|---:|---:|---|
@@ -264,16 +267,17 @@ pytest -q scripts/tests/test_oneflow_sampler_step.py -k build_unified_sampler_in
 ## Stage 4：interleaved schedule（τ_img 删除/保留）正确性
 
 ### 4.1 目标
-验证最易出错的“删除 + bag 合并”语义：\n
-- `τ_img = τ_text - κ^{-1}(u)` 的删除条件\n
-- 删除 `<|oneflow_image|>` 后：\n
-  - 必须把该 token 放回到“前一个 slot 的 bag”\n
-  - 并把“删除 token 后面的 bag”合并到前一个 bag（否则 bag 与 `X_t` 对不齐）\n
+验证最易出错的“删除 + bag 合并”语义：
+
+- `τ_img = τ_text - κ^{-1}(u)` 的删除条件
+- 删除 `<|oneflow_image|>` 后：
+  - 必须把该 token 放回到“前一个 slot 的 bag”
+  - 并把“删除 token 后面的 bag”合并到前一个 bag（否则 bag 与 `X_t` 对不齐）
 
 ### 4.2 强制触发测试（推荐）
 用固定 `τ_text` 和固定 `u` 来构造两种情形：
-- **case A**：`τ_img < 0` ⇒ delete\n
-- **case B**：`τ_img >= 0` ⇒ keep，并产生 `t_img=min(1,τ_img)`\n
+- **case A**：`τ_img < 0` ⇒ delete
+- **case B**：`τ_img >= 0` ⇒ keep，并产生 `t_img=min(1,τ_img)`
 
 对每个 case 输出 trace，断言 `X_t/bags/images/t_img` 与预期完全一致。
 
@@ -289,15 +293,18 @@ pytest -q scripts/tests/test_oneflow_interleaved_schedule.py
 ## Stage 5：端到端（最小集成）验证
 
 ### 5.1 CPU 快速集成（强烈推荐每次改动都跑）
-目标：尽量不依赖外部下载，只验证 shape/数值稳定：\n
-- 能 forward/backward 一步\n
-- `loss_text` 有限、`loss_img` 有限\n
-- sampler 能输出 `images[0].shape == [image_num_tokens, dim_latent]`\n
+目标：尽量不依赖外部下载，只验证 shape/数值稳定：
+
+- 能 forward/backward 一步
+- `loss_text` 有限、`loss_img` 有限
+- sampler 能输出 `images[0].shape == [image_num_tokens, dim_latent]`
 
 ### 5.2 NPU 集成（可选开关）
-目标：复用 16×NPU smoke 命令，在 CI/本地按需执行。\n
-建议用环境变量控制：\n
-- `RUN_NPU_TESTS=1 pytest -q ...`\n
+目标：复用 16×NPU smoke 命令，在 CI/本地按需执行。
+
+建议用环境变量控制：
+
+- `RUN_NPU_TESTS=1 pytest -q ...`
 
 ### 5.3 推荐命令模板
 
@@ -321,7 +328,7 @@ cd /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm
 RUN_NPU_TESTS=1 pytest -q scripts/tests/test_oneflow_integration_npu_optional.py
 ```
 
-**模板 C（可选：16×NPU smoke 训练命令，快速验证训练链路不崩）**
+**模板 C（可选：16×NPU mixed-generation smoke；使用专门入口，避免把 base entry 误写成已支持所有阶段旗标）**
 
 ```bash
 cd /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm
@@ -329,7 +336,7 @@ cd /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm
 accelerate launch \
   --config_file scripts/accelerate_configs/npu_ddp.yaml \
   --main_process_port 29500 \
-  examples/oneflow/pt_wds_latents.py \
+  examples/oneflow_mixed_generation/pt_mixed.py \
   --output_dir "/path/to/ckpts/oneflow_mm_smoke" \
   --tokenizer_name_or_path "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/tokenizer" \
   --shards "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/wds_latents_flower32" \
@@ -353,7 +360,7 @@ accelerate launch \
   --config_file scripts/accelerate_configs/npu_ddp.yaml \
   --num_processes 1 \
   --main_process_port 29500 \
-  examples/oneflow/pt_wds_latents.py \
+  examples/oneflow_image_only/pt_image.py \
   --output_dir "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/ckpts/oneflow_overfit_one_shard_000070352" \
   --tokenizer_name_or_path "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/tokenizer" \
   --shards "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/wds_latents_flower32/shard-000005.tar" \
@@ -362,7 +369,6 @@ accelerate launch \
   --per_device_train_batch_size 1 \
   --gradient_accumulation_steps 1 \
   --dataloader_num_workers 0 \
-  --mixed_generation_prob 1.0 \
   --image_loss_weight 10 \
   --lr_scheduler_type constant --warmup_ratio 0.0 \
   --save_strategy steps --save_steps 500 --save_total_limit 20 \
@@ -376,18 +382,19 @@ cd /mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm
 
 python -u examples/oneflow/overfit_eval_wds.py \
   --model_dir "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/ckpts/oneflow_overfit_one_shard_000070352" \
-  --tokenizer_name_or_path "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/tokenizer" \
-  --shards "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/wds_latents_flower32/shard-000005.tar" \
+  --wds_shards "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/latents_128_bundle/wds_latents_flower32/shard-000005.tar" \
   --sample_key 000070352 \
-  --output_base "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/vis/overfit_trend_000070352"
+  --output_dir "/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/data/vis/overfit_trend_000070352"
 ```
 
 ---
 
 ## Trace JSON（统一格式，所有阶段共用）
 
-我们会把所有关键中间态写进 JSON，便于复现与对比（同一输入、不同 checkpoint/不同实现版本）。\n
-建议 schema（字段可增不减）：\n
+我们会把所有关键中间态写进 JSON，便于复现与对比（同一输入、不同 checkpoint/不同实现版本）。
+
+建议 schema（字段可增不减）：
+
 
 ```json
 {
@@ -423,25 +430,27 @@ python -u examples/oneflow/overfit_eval_wds.py \
 
 ## 单元测试映射（每个 Stage 都有对应 test）
 
-pytest 已配置：`pyproject.toml` 的 `testpaths = [\"scripts/tests\"]`\n
+pytest 已配置：`pyproject.toml` 的 `testpaths = [\"scripts/tests\"]`
 
-我们会新增并维护这些测试文件：\n
-- `scripts/tests/test_oneflow_sequence_ops.py`\n
-- `scripts/tests/test_oneflow_interleaved_schedule.py`\n
-- `scripts/tests/test_oneflow_text_loss_eq7.py`\n
-- `scripts/tests/test_oneflow_image_flow_matching.py`\n
-- `scripts/tests/test_oneflow_sampler_step.py`\n
-- `scripts/tests/test_oneflow_wds_minishard.py`\n
 
-运行方式：\n
+我们会新增并维护这些测试文件：
+
+- `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/tests/test_oneflow_sequence_ops.py`
+- `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/tests/test_oneflow_interleaved_schedule.py`
+- `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/tests/test_oneflow_text_loss_eq7.py`
+- `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/tests/test_oneflow_image_flow_matching.py`
+- `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/tests/test_oneflow_sampler_step.py`
+- `/mnt/ai4s/zhangjinouwen/Project/dllm/oneflow/dllm/scripts/tests/test_oneflow_wds_minishard.py`
+
+运行方式：
+
 
 ```bash
 pytest -q scripts/tests/test_oneflow_*.py
 ```
 
-如果你在纯 CPU 环境遇到 `torch_npu` 自动加载报错，可在运行 pytest 前加：\n
+如果你在纯 CPU 环境遇到 `torch_npu` 自动加载报错，可在运行 pytest 前加：
 
 ```bash
 export TORCH_DEVICE_BACKEND_AUTOLOAD=0
 ```
-
