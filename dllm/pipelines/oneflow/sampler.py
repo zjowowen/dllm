@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-from dllm.core.samplers.base import BaseSampler, SamplerConfig, SamplerOutput
+from dllm.core.samplers.base import BaseSampler, BaseSamplerConfig as SamplerConfig, BaseSamplerOutput as SamplerOutput
 from dllm.core.schedulers import BaseKappaScheduler, LinearKappaScheduler, make_kappa_scheduler
 from dllm.pipelines.ctmc_utils import sample_from_logits
 from dllm.pipelines.oneflow.sequence_ops import build_unified_sampler_inputs_bs1
