@@ -28,10 +28,11 @@ dependencies = [
     "matplotlib",
     "pytest",
     "rich",
+    "lm_eval",
 ]
 
 [project.optional-dependencies]
-optional = [
+accelerated = [
     "bitsandbytes==0.48.1",
     "vllm==0.8.5.post1",
     "flash-attn==2.8.3",
@@ -56,7 +57,9 @@ oneflow = [
 ]
 rl = [
     "trl==0.26.0",
-    "math_verify==0.8.0",
+]
+evaluation-math = [
+    "lm_eval[math]",
 ]
 
 [tool.black]

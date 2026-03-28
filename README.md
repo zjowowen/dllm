@@ -102,14 +102,27 @@ pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
 # install dllm package
 pip install -e .
 ```
+`pip install -e .` covers the base training and evaluation code paths, but some workflows need extras:
+
+- `pip install -e ".[accelerated]"`: adds accelerated inference and performance-oriented dependencies such as `bitsandbytes`, `vllm`, and `flash-attn`.
+- `pip install -e ".[oneflow]"`: adds the extra dependencies used by the OneFlow / Transfusion backbone components.
+- `pip install -e ".[rl]"`: adds RL training dependencies.
+- `pip install -e ".[evaluation-math]"`: adds the optional `lm_eval[math]` dependency layer for math-enabled harness tasks, but does not replace the vendored harness setup below.
+
 ### (optional) Evaluation setup
 
 ```bash
-# initialize `lm-evaluation-harness` submodule
+# base install: installs dLLM and the base `lm_eval` package needed by dLLM
+# pip install -e .
+
+# optional vendored harness install: still requires submodule initialization
 git submodule update --init --recursive
 
-# install submodule in editable mode with IFEval & Math dependencies
-pip install -e "lm-evaluation-harness[ifeval,math]"
+# install the vendored harness in editable mode with non-math evaluation extras
+pip install -e "lm-evaluation-harness[ifeval]"
+
+# optional math-specific dependency layer: use in addition to the vendored harness install
+pip install -e ".[evaluation-math]"
 ```
 
 ### (optional) Slurm setup
